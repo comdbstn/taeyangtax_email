@@ -1,7 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
-const fs = require('fs'); // 파일 시스템 모듈 추가
+const fs = require('fs');
 const { google } = require('googleapis');
 const axios = require('axios');
 require('dotenv').config();
@@ -9,33 +9,15 @@ require('dotenv').config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// --- 서버 시작 전 파일 존재 여부 확인 (디버깅) ---
 const buildPath = path.join(__dirname, 'frontend/dist');
 const indexPath = path.join(buildPath, 'index.html');
-
-console.log(`[Debug] 빌드 경로: ${buildPath}`);
-console.log(`[Debug] index.html 예상 경로: ${indexPath}`);
-
-if (fs.existsSync(indexPath)) {
-  console.log(`[Debug] 성공: index.html 파일을 찾았습니다!`);
-} else {
-  console.error(`[Debug] 실패: index.html 파일을 찾을 수 없습니다!`);
-  try {
-    const parentDir = fs.readdirSync(__dirname);
-    console.error(`[Debug] 현재 폴더 내용:`, parentDir);
-    const frontendDir = fs.readdirSync(path.join(__dirname, 'frontend'));
-    console.error(`[Debug] frontend 폴더 내용:`, frontendDir);
-  } catch (e) {
-    console.error(`[Debug] 폴더 내용을 읽는 중 오류 발생:`, e.message);
-  }
-}
-// --- 디버깅 끝 ---
-
 
 app.use(cors());
 app.use(express.json());
 
-// ... (기존 API 로직은 여기에 그대로 유지됩니다)
+
+// --- API Routes ---
+// (기존 API 로직들은 여기에 그대로 위치합니다)
 function getGmailClient() {
   if (!process.env.GMAIL_CLIENT_ID || !process.env.GMAIL_CLIENT_SECRET || !process.env.GMAIL_REFRESH_TOKEN) {
     throw new Error('Gmail API 환경변수가 설정되지 않았습니다.');
@@ -154,13 +136,19 @@ app.post('/api/send', async (req, res) => {
   }
 });
 
-
 // --- Frontend Serving ---
 app.use(express.static(buildPath));
 
+// 루트 경로("/") 요청에 대해 명시적으로 index.html 제공
+app.get('/', (req, res) => {
+  res.sendFile(indexPath);
+});
+
+// API가 아닌 다른 모든 GET 요청도 React 앱으로 라우팅
 app.get('*', (req, res) => {
   res.sendFile(indexPath);
 });
+
 
 app.listen(PORT, () => {
   console.log(`서버가 ${PORT}번 포트에서 실행 중입니다.`);
