@@ -1,7 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
-const fs = require('fs'); // 파일 시스템 모듈 추가
+const fs = require('fs');
 const { google } = require('googleapis');
 const axios = require('axios');
 require('dotenv').config();
@@ -9,24 +9,25 @@ require('dotenv').config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// --- 블랙박스 로깅 시작 ---
+app.use((req, res, next) => {
+  console.log(`[Request Log] Path: ${req.path}, Method: ${req.method}`);
+  next();
+});
+// --- 블랙박스 로깅 끝 ---
+
 app.use(cors());
 app.use(express.json());
 
 // --- Health Check Endpoint ---
-app.get('/health', (req, res) => {
-  res.status(200).send('OK');
-});
+app.get('/health', (req, res) => res.status(200).send('OK'));
 
 // --- API Routes ---
-// (API 로직은 여기에 그대로 유지됩니다)
 function getGmailClient() {
   if (!process.env.GMAIL_CLIENT_ID || !process.env.GMAIL_CLIENT_SECRET || !process.env.GMAIL_REFRESH_TOKEN) {
     throw new Error('Gmail API 환경변수가 설정되지 않았습니다.');
   }
-  const oAuth2Client = new google.auth.OAuth2(
-    process.env.GMAIL_CLIENT_ID,
-    process.env.GMAIL_CLIENT_SECRET
-  );
+  const oAuth2Client = new google.auth.OAuth2(process.env.GMAIL_CLIENT_ID, process.env.GMAIL_CLIENT_SECRET);
   oAuth2Client.setCredentials({ refresh_token: process.env.GMAIL_REFRESH_TOKEN });
   return google.gmail({ version: 'v1', auth: oAuth2Client });
 }
@@ -93,16 +94,16 @@ const buildPath = path.join(__dirname, 'frontend/dist');
 app.use(express.static(buildPath));
 
 app.get('*', (req, res) => {
-  // 최종 디버깅: index.html 파일 내용을 직접 읽어서 로그로 출력
   const indexPath = path.join(buildPath, 'index.html');
+  console.log(`[Serving Fallback] Fallback triggered for: ${req.path}`);
   fs.readFile(indexPath, 'utf8', (err, htmlData) => {
     if (err) {
-      console.error('Error reading index.html:', err);
-      return res.status(404).send('index.html not found.');
+      console.error('[CRITICAL ERROR] index.html 파일을 읽을 수 없습니다!:', err);
+      return res.status(404).send('Application not found. Build may have failed.');
     }
-    console.log('--- Serving index.html ---');
+    console.log('--- [index.html Content START] ---');
     console.log(htmlData);
-    console.log('--------------------------');
+    console.log('--- [index.html Content END] ---');
     res.send(htmlData);
   });
 });
