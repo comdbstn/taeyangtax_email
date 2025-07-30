@@ -4,11 +4,12 @@ import react from '@vitejs/plugin-react';
 export default defineConfig({
   plugins: [react()],
   server: {
-    port: 3000,
+    port: 5173,
     proxy: {
-      '/emails': 'http://localhost:4000',
-      '/generate': 'http://localhost:4000',
-      '/send': 'http://localhost:4000',
+      '/api': 'http://localhost:3000',
     },
+  },
+  build: {
+    outDir: 'dist',
   },
 }); 

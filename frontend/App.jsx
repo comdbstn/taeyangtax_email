@@ -7,17 +7,24 @@ function App() {
   const [sentIdx, setSentIdx] = useState(null);
 
   useEffect(() => {
-    fetch('/emails')
+    fetch('/api/emails')
       .then(res => res.json())
       .then(data => setEmail(data.email));
   }, []);
 
   const generateResponses = () => {
     setLoading(true);
-    fetch('/generate', {
+    fetch('/api/generate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email })
+      body: JSON.stringify({ 
+        email,
+        examples: [
+          "ITIN 신청은 IRS(미국 국세청)에서 발급하는 개인 납세자 식별번호입니다. 필요 서류는 W-7 양식, 신분증명서류, 세금보고 필요성을 증명하는 서류입니다. 처리기간은 약 7-11주 소요되며, 수수료는 없습니다.",
+          "안녕하세요. ITIN 관련 문의 감사합니다. ITIN은 사회보장번호가 없는 분들이 세금보고를 위해 발급받는 번호입니다. 신청 절차와 필요서류에 대해 자세히 안내해드리겠습니다.",
+          "고객님, ITIN 신청 절차는 다음과 같습니다. 1) W-7 양식 작성 2) 신분증명서류 준비 3) 세금보고 필요성 증명서류 첨부 4) IRS 제출. 자세한 상담을 원하시면 언제든 연락주세요."
+        ]
+      })
     })
       .then(res => res.json())
       .then(data => {
@@ -27,7 +34,7 @@ function App() {
   };
 
   const sendResponse = (idx) => {
-    fetch('/send', {
+    fetch('/api/send', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ emailId: email.id, response: responses[idx] })
