@@ -6,14 +6,13 @@ const axios = require('axios');
 require('dotenv').config();
 
 const app = express();
+const PORT = process.env.PORT || 3000;
+
 app.use(cors());
 app.use(express.json());
 
-// 정적 파일 제공 (빌드된 React 앱)
-const staticPath = path.join(__dirname, 'frontend/dist');
-app.use(express.static(staticPath));
+// --- API Routes ---
 
-// Gmail OAuth2 클라이언트 생성 함수
 function getGmailClient() {
   if (!process.env.GMAIL_CLIENT_ID || !process.env.GMAIL_CLIENT_SECRET || !process.env.GMAIL_REFRESH_TOKEN) {
     throw new Error('Gmail API 환경변수가 설정되지 않았습니다.');
@@ -26,7 +25,6 @@ function getGmailClient() {
   return google.gmail({ version: 'v1', auth: oAuth2Client });
 }
 
-// API 라우트: 이메일 조회
 app.get('/api/emails', async (req, res) => {
   try {
     const gmail = getGmailClient();
@@ -60,7 +58,6 @@ app.get('/api/emails', async (req, res) => {
   }
 });
 
-// API 라우트: Gemini 답변 생성
 app.post('/api/generate', async (req, res) => {
   try {
     if (!process.env.GEMINI_API_KEY) {
@@ -99,21 +96,20 @@ app.post('/api/generate', async (req, res) => {
   }
 });
 
-// API 라우트: 답변 전송
 app.post('/api/send', async (req, res) => {
   try {
     const { emailId, response } = req.body;
     const gmail = getGmailClient();
-    const msgRes = await gmail.users.messages.get({ 
-      userId: 'me', 
-      id: emailId, 
-      format: 'metadata', 
-      metadataHeaders: ['From', 'Subject', 'Message-ID'] 
+    const msgRes = await gmail.users.messages.get({
+      userId: 'me',
+      id: emailId,
+      format: 'metadata',
+      metadataHeaders: ['From', 'Subject', 'Message-ID']
     });
     const from = msgRes.data.payload.headers.find(h => h.name === 'From')?.value;
     const subject = msgRes.data.payload.headers.find(h => h.name === 'Subject')?.value;
     const messageId = msgRes.data.payload.headers.find(h => h.name === 'Message-ID')?.value;
-    
+
     const raw = Buffer.from(
       `To: ${from}\r\n` +
       `Subject: Re: ${subject}\r\n` +
@@ -135,12 +131,18 @@ app.post('/api/send', async (req, res) => {
   }
 });
 
-// React 앱 제공
+
+// --- Frontend Serving ---
+
+const buildPath = path.join(__dirname, 'frontend/dist');
+app.use(express.static(buildPath));
+
+// API가 아닌 모든 GET 요청을 React 앱으로 라우팅 (가장 마지막에 위치해야 함)
 app.get('*', (req, res) => {
-  res.sendFile(path.join(staticPath, 'index.html'));
+  res.sendFile(path.join(buildPath, 'index.html'));
 });
 
-const PORT = process.env.PORT || 3000;
+
 app.listen(PORT, () => {
   console.log(`서버가 ${PORT}번 포트에서 실행 중입니다.`);
 });
