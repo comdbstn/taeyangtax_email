@@ -9,11 +9,14 @@ require('dotenv').config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-const buildPath = path.join(__dirname, 'frontend/dist');
-const indexPath = path.join(buildPath, 'index.html');
-
 app.use(cors());
 app.use(express.json());
+
+// --- Health Check Endpoint ---
+// Railway가 서버 상태를 확인할 수 있도록 가장 빠르고 간단한 응답 경로 추가
+app.get('/health', (req, res) => {
+  res.status(200).send('OK');
+});
 
 
 // --- API Routes ---
@@ -137,16 +140,11 @@ app.post('/api/send', async (req, res) => {
 });
 
 // --- Frontend Serving ---
+const buildPath = path.join(__dirname, 'frontend/dist');
 app.use(express.static(buildPath));
 
-// 루트 경로("/") 요청에 대해 명시적으로 index.html 제공
-app.get('/', (req, res) => {
-  res.sendFile(indexPath);
-});
-
-// API가 아닌 다른 모든 GET 요청도 React 앱으로 라우팅
 app.get('*', (req, res) => {
-  res.sendFile(indexPath);
+  res.sendFile(path.join(buildPath, 'index.html'));
 });
 
 
