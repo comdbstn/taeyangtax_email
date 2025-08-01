@@ -24,7 +24,7 @@ const SIGNATURE = `
 <br/><br/>
 <div style="color: #FFFFFF; font-family: sans-serif; font-size: 12px;">
   <strong>TAEYANG TAX SERVICE</strong><br/>
-  780 Roosevelt, #209, Irvine, CA 92620<br/>
+  780 Roosevelt, #209, Irvine, CA 2620<br/>
   <strong>Office</strong>: 949 546 7979 / <strong>Fax</strong>: 949 296 4030<br/>
   <strong>카카오톡 ID</strong>: taeyangtax<br/>
   <strong>Email</strong>: info@taeyangtax.com<br/><br/>
@@ -71,7 +71,6 @@ function getGmailClient() {
 function parseEmailBody(payload) {
     if (!payload) return '';
 
-    // 1. Find the best content part (prefer HTML)
     let body = '';
     let mimeType = payload.mimeType || 'text/plain';
 
@@ -100,7 +99,6 @@ function parseEmailBody(payload) {
         return '';
     }
 
-    // 2. If it's HTML, convert it to a clean text representation
     let text = body;
     if (mimeType === 'text/html') {
         text = text
@@ -118,7 +116,6 @@ function parseEmailBody(payload) {
             .replace(/&gt;/g, '>');
     }
 
-    // 3. Remove quoted history from the text
     const lines = text.split('\n');
     const resultLines = [];
     const quoteMarkers = [
@@ -136,7 +133,6 @@ function parseEmailBody(payload) {
         }
     }
 
-    // 4. Final cleanup
     let cleanedText = resultLines.join('\n')
         .replace(/\n\s*\n+/g, '\n\n')
         .trim();
