@@ -105,14 +105,14 @@ const AttachmentManager = ({ attachments, onClose, onUploadSuccess, onDeleteSucc
     );
 };
 
-const EmailDetail = ({ email, attachments, onSendSuccess, showToast, signature }) => {
+const EmailDetail = ({ email, attachments, onSend, showToast, signature }) => {
   const [responses, setResponses] = useState([]);
   const [isSending, setIsSending] = useState(false);
   const [selectedAttachments, setSelectedAttachments] = useState({});
   
   useEffect(() => {
-    if (email && email.aiResponses) {
-      setResponses(email.aiResponses);
+    if (email) {
+      setResponses(email.aiResponses || []);
       setSelectedAttachments({}); 
     }
   }, [email]);
@@ -129,26 +129,21 @@ const EmailDetail = ({ email, attachments, onSendSuccess, showToast, signature }
     if (!email || isSending) return;
     setIsSending(true);
     try {
-      const res = await fetch('/api/send', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          threadId: email.threadId, messageId: email.messageId,
-          response: responses[index],
-          attachments: Object.keys(selectedAttachments).filter(key => selectedAttachments[key])
-        })
-      });
-      if (!res.ok) throw new Error('Server returned an error');
-      showToast('Response sent successfully!');
-      onSendSuccess(email.threadId);
-    } catch (err) { showToast('Failed to send response.'); } 
-    finally { setIsSending(false); }
+        await onSend({
+            threadId: email.threadId,
+            response: responses[index],
+            attachments: Object.keys(selectedAttachments).filter(key => selectedAttachments[key])
+        });
+        showToast('Response sent successfully!');
+    } catch (err) {
+        showToast('Failed to send response.');
+    } finally {
+        setIsSending(false);
+    }
   };
 
   if (!email) return <div className="detail-container placeholder">Select an email to view details.</div>;
   
-  // A simple way to check if the sender is "me" (Taeyang Tax)
-  const isFromMe = (from) => /taeyang/i.test(from) || /info@/i.test(from);
-
   return (
     <div className="detail-container">
       <div className="detail-header">
@@ -156,24 +151,25 @@ const EmailDetail = ({ email, attachments, onSendSuccess, showToast, signature }
         <p>From: {email.from}</p>
       </div>
       <div className="message-history">
-        {email.messages.map((msg, index) => {
-            const fromMe = isFromMe(msg.from);
-            return (
-                <div key={index} className={`message-container ${fromMe ? 'sent' : 'received'}`}>
-                    <div className="message-bubble">
-                        <div className="message-from">{msg.from.split('<')[0].trim()}</div>
-                        <p>{msg.body}</p>
-                    </div>
+        {email.messages.map((msg) => (
+            <div key={msg.id} className={`message-container ${msg.isFromMe ? 'sent' : 'received'}`}>
+                <div className="message-bubble">
+                    <div className="message-from">{msg.isFromMe ? 'Me' : msg.from.split('<')[0].trim()}</div>
+                    <p>{msg.body}</p>
                 </div>
-            )
-        })}
+            </div>
+        ))}
       </div>
-      <div className="responses-section">
-        <h3>AI-Generated Response(s)</h3>
-        {responses.length > 0 ? responses.map((res, idx) => (
-          <ResponseCard key={idx} response={res} onUpdate={(field, value) => handleResponseUpdate(idx, field, value)} onSend={() => handleSend(idx)} isSending={isSending}/>
-        )) : <p className="error-text">Could not generate AI response for this email.</p>}
-      </div>
+
+      {!email.replied && (
+        <div className="responses-section">
+          <h3>AI-Generated Response(s)</h3>
+          {responses.length > 0 ? responses.map((res, idx) => (
+            <ResponseCard key={idx} response={res} onUpdate={(field, value) => handleResponseUpdate(idx, field, value)} onSend={() => handleSend(idx)} isSending={isSending}/>
+          )) : <p className="error-text">Could not generate AI response for this email.</p>}
+        </div>
+      )}
+      
       <div className="attachments-section">
         <h3>Common Attachments</h3>
         {attachments.length > 0 ? (
@@ -230,6 +226,7 @@ function App() {
       const data = await res.json();
       setUnreplied(data.unreplied || []);
       setReplied(data.replied || []);
+      // Set active thread ID to the first unreplied, or first replied, or null
       if (data.unreplied?.length > 0) setActiveThreadId(data.unreplied[0].threadId);
       else if (data.replied?.length > 0) setActiveThreadId(data.replied[0].threadId);
       else setActiveThreadId(null);
@@ -258,29 +255,34 @@ function App() {
     else { setAuthError('Incorrect password.'); setPassword(''); }
   };
   
-  const handleSendSuccess = (sentThreadId) => {
-    setUnreplied(prevUnreplied => {
-      const newUnreplied = prevUnreplied.filter(t => t.threadId !== sentThreadId);
-      const sentEmail = unreplied.find(t => t.threadId === sentThreadId);
+  const handleSend = async (payload) => {
+      const res = await fetch('/api/send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+      });
 
-      if (sentEmail) {
-        sentEmail.replied = true;
-        setReplied(prevReplied => [sentEmail, ...prevReplied]);
-      }
-
-      if (newUnreplied.length > 0) {
-        setActiveThreadId(newUnreplied[0].threadId);
-      } else {
-        setActiveThreadId(sentEmail ? sentEmail.threadId : null);
-      }
+      if (!res.ok) throw new Error('Server returned an error');
       
-      return newUnreplied;
-    });
+      const { updatedThread } = await res.json();
+
+      // Update state based on the server's response
+      setUnreplied(prev => prev.filter(t => t.threadId !== payload.threadId));
+      setReplied(prev => [updatedThread, ...prev.filter(t => t.threadId !== payload.threadId)]);
+      setActiveThreadId(payload.threadId); // Keep the current thread active to see the reply
   };
   
-  const filteredUnreplied = useMemo(() => unreplied.filter(e => e.subject.toLowerCase().includes(searchTerm.toLowerCase()) || e.from.toLowerCase().includes(searchTerm.toLowerCase())), [unreplied, searchTerm]);
-  const filteredReplied = useMemo(() => replied.filter(e => e.subject.toLowerCase().includes(searchTerm.toLowerCase()) || e.from.toLowerCase().includes(searchTerm.toLowerCase())), [replied, searchTerm]);
-  const activeEmail = unreplied.find(t => t.threadId === activeThreadId) || replied.find(t => t.threadId === activeThreadId);
+  const allThreads = useMemo(() => [...unreplied, ...replied], [unreplied, replied]);
+
+  const filteredThreads = useMemo(() => {
+    if (!searchTerm) return allThreads;
+    return allThreads.filter(e => e.subject.toLowerCase().includes(searchTerm.toLowerCase()) || e.from.toLowerCase().includes(searchTerm.toLowerCase()));
+  }, [allThreads, searchTerm]);
+
+  const filteredUnreplied = useMemo(() => filteredThreads.filter(t => !t.replied), [filteredThreads]);
+  const filteredReplied = useMemo(() => filteredThreads.filter(t => t.replied), [filteredThreads]);
+  
+  const activeEmail = useMemo(() => allThreads.find(t => t.threadId === activeThreadId), [allThreads, activeThreadId]);
 
   const displayedReplied = showAllReplied ? filteredReplied : filteredReplied.slice(0, 5);
 
@@ -313,7 +315,7 @@ function App() {
         </div>
           <div className="sidebar-footer"><button className="manage-attachments-btn" onClick={() => setAttachmentManagerOpen(true)}>Manage Files</button></div>
         </aside>
-        <main className="main-content"><EmailDetail email={activeEmail} attachments={attachments} onSendSuccess={handleSendSuccess} showToast={showToast} signature={signature} /></main>
+        <main className="main-content"><EmailDetail email={activeEmail} attachments={attachments} onSend={handleSend} showToast={showToast} signature={signature} /></main>
     </div>
       {isAttachmentManagerOpen && <AttachmentManager attachments={attachments} onClose={() => setAttachmentManagerOpen(false)} onUploadSuccess={fetchAttachments} onDeleteSuccess={fetchAttachments} showToast={showToast} />}
       <Toast message={toast.message} show={toast.show} onDismiss={() => setToast({ ...toast, show: false })} />
