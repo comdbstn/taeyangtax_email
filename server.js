@@ -111,10 +111,10 @@ function getCleanBody(payload) {
 
     for (const line of lines) {
         const trimmedLine = line.trim();
-        if (quoteMarkers.some(marker => trimmedLine.startsWith(marker))) {
-            break; // Stop when a quote header is found
+        // Only skip the line if it's a quote marker, don't stop processing
+        if (!quoteMarkers.some(marker => trimmedLine.startsWith(marker))) {
+            resultLines.push(line);
         }
-        resultLines.push(line);
     }
 
     return resultLines.join('\n').replace(/\n\s*\n+/g, '\n\n').trim();
@@ -147,23 +147,22 @@ async function generateAiResponses(conversationHistory, originalSubject) {
 **JSON Structure:**
 Each response must be a JSON object with three keys: "type", "subject", and "body".
 - "type": A short Korean phrase summarizing the response category. Use one of the following: "직접적인 답변", "대안/추가 정보 제시", "추가 정보 요청", "유료 상담 제안".
-- "subject": A concise and professional email subject in Korean. It should start with "Re: " followed by a summary of the response.
+- "subject": A concise and professional email subject in Korean. It should start with "Re: " followed by a summary of the response. DO NOT include any codes or IDs like 'FX...'.
 - "body": The email body in Korean.
 
 **Directives:**
-1.  **Complexity Assessment:**
-    - If the query is complex or a new client inquiry, generate a **single JSON object** for a paid consultation. The "type" must be "유료 상담 제안". The body must be this exact text:
-      "안녕하세요.\\n세무회계태양 입니다.\\n\\n보내주신 이메일 확인했습니다.\\n죄송하지만 말씀드릴 내용이 많습니다.\\n그리고 이번에 부터 보고하셔야 할 2024년 세금보고는 작년과 달리 매우 복잡하게 됩니다.\\n질문주신 하나하나가 모두 설명 드릴 것이 많아서요.\\n\\n괜찮으시다면 유료 상담으로 진행을 하시면 어떨까 여쭙고자 합니다.\\n비용은 100불이며, Zelle로 받습니다.\\nZelle : taxtaeyang@gmail.com ( Taeyang Tax Service)\\n비용 납부해주시고 MA에 계신것으로 알아서 통화를 하면 좋겠습니다.\\n\\n바뀌시는것이 너무 많고 중요한것들이기에 상담을 추천드려요. 꼭 필요한"
+1.  **Analyze Context:** Base your response *only* on the provided "Full Email Conversation History". DO NOT use information from the "Reference Styles" examples, such as names (e.g., 이은주) or specific codes.
+2.  **Complexity Assessment:**
+    - If the query is complex or a new client inquiry, generate a **single JSON object** for a paid consultation. The "type" must be "유료 상담 제안".
     - If the query is simple, proceed to the next directive.
-
-2.  **Three Response Options (for simple queries):**
+3.  **Three Response Options (for simple queries):**
     Generate an array of **three separate JSON objects**. The difference must be in the solution/answer, not just the tone.
     - **Response 1 (Direct Answer):** "type" should be "직접적인 답변".
     - **Response 2 (Alternative/Broader Perspective):** "type" should be "대안/추가 정보 제시".
     - **Response 3 (Information Request):** "type" should be "추가 정보 요청".
     - **Attachment Hint:** If a document is relevant, mention it in the body (e.g., "관련 서류를 첨부해 드립니다.").
 
-**Reference Styles:**
+**Reference Styles (For style and tone only):**
 ${ragContext}
 
 **Full Email Conversation History:**
