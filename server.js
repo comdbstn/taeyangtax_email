@@ -175,7 +175,7 @@ async function fetchAndCacheEmails() {
     console.log('Starting background email cache update...');
     try {
         const gmail = getGmailClient();
-        const listRes = await gmail.users.threads.list({ userId: 'me', labelIds: ['INBOX'], q: 'is:unread', maxResults: 10 });
+        const listRes = await gmail.users.threads.list({ userId: 'me', labelIds: ['INBOX'], q: '', maxResults: 10 });
 
         if (!listRes.data.threads || listRes.data.threads.length === 0) {
             emailCache.unreplied = [];
