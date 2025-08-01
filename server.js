@@ -70,21 +70,39 @@ function getGmailClient() {
   return google.gmail({ version: 'v1', auth: oAuth2Client });
 }
 
-function parseEmailBody(parts) {
-    if (!parts) return '';
-    const findTextPart = (arr) => {
-        for (const part of arr) {
-            if (part.mimeType === 'text/plain' && part.body.data) return Buffer.from(part.body.data, 'base64').toString('utf-8');
-            if (part.parts) { const nestedBody = findTextPart(part.parts); if (nestedBody) return nestedBody; }
+// --- REVISED AND ROBUST parseEmailBody function ---
+function parseEmailBody(payload) {
+    if (!payload) return '';
+
+    const findTextPart = (partsArr) => {
+        let body = '';
+        if (!Array.isArray(partsArr)) return body;
+
+        for (const part of partsArr) {
+            if (part.mimeType === 'text/plain' && part.body && part.body.data) {
+                body = Buffer.from(part.body.data, 'base64').toString('utf-8');
+                return body;
+            }
+            if (part.parts) {
+                const nestedBody = findTextPart(part.parts);
+                if (nestedBody) return nestedBody;
+            }
         }
-        return null;
+        return body;
     };
-    let textBody = findTextPart(parts);
-    if (textBody) return textBody;
-    const nonMultipart = Array.isArray(parts) ? parts[0] : parts;
-    if (nonMultipart && nonMultipart.body && nonMultipart.body.data) return Buffer.from(nonMultipart.body.data, 'base64').toString('utf-8');
+
+    if (payload.parts && Array.isArray(payload.parts)) {
+        const body = findTextPart(payload.parts);
+        if (body) return body;
+    }
+
+    if (payload.body && payload.body.data) {
+        return Buffer.from(payload.body.data, 'base64').toString('utf-8');
+    }
+    
     return '';
 }
+
 
 function getSimilarSamples(question) {
     if (emailSamples.length === 0) return [];
@@ -151,13 +169,7 @@ Generate responses based on the full conversation and all directives.`;
       { headers: { 'Content-Type': 'application/json' } }
     );
     const text = geminiRes.data.candidates?.[0]?.content?.parts?.[0]?.text || "죄송합니다. 답변을 생성할 수 없습니다.";
-
-    // Check if the response is a consultation suggestion
-    if (text.includes("유료 상담으로 진행")) {
-        return [text.trim()];
-    }
-    
-    // Otherwise, parse the three distinct responses
+    if (text.includes("유료 상담으로 진행")) return [text.trim()];
     return text.split(/Response \d+\s\(.+\):/).map(s => s.trim()).filter(Boolean);
   } catch(e) {
     console.error('Gemini API Error:', e.response ? e.response.data.error : e.message);
@@ -191,14 +203,15 @@ async function fetchAndCacheEmails() {
             const messages = threadRes.data.messages || [];
             if (messages.length === 0 || messages.some(m => m.labelIds.includes('SENT'))) continue;
 
-            const conversationHistory = messages.map(msg => `From: ${msg.payload.headers.find(h => h.name === 'From')?.value || 'Unknown'}\n\n${parseEmailBody(msg.payload.parts || msg.payload)}`).join('\n\n--- Next Message ---\n\n');
+            // Pass the entire payload to the robust parser
+            const conversationHistory = messages.map(msg => `From: ${msg.payload.headers.find(h => h.name === 'From')?.value || 'Unknown'}\n\n${parseEmailBody(msg.payload)}`).join('\n\n--- Next Message ---\n\n');
             const lastMessage = messages[messages.length - 1];
             const threadData = {
                 threadId: threadHeader.id, messageId: lastMessage.id,
                 from: lastMessage.payload.headers.find(h => h.name === 'From')?.value || '',
                 subject: lastMessage.payload.headers.find(h => h.name === 'Subject')?.value || '',
                 snippet: lastMessage.snippet, historyId: lastMessage.historyId,
-                messages: messages.map(m => ({ id: m.id, from: m.payload.headers.find(h => h.name === 'From')?.value || '', body: parseEmailBody(m.payload.parts || m.payload) })),
+                messages: messages.map(m => ({ id: m.id, from: m.payload.headers.find(h => h.name === 'From')?.value || '', body: parseEmailBody(m.payload) })),
                 aiResponses: await generateAiResponses(conversationHistory), replied: false,
             };
             newUnreplied.push(threadData);
@@ -230,9 +243,9 @@ app.post('/api/send', async (req, res) => {
     const { threadId, messageId, response, attachments = [] } = req.body;
     const gmail = getGmailClient();
     const originalMsg = await gmail.users.messages.get({ userId: 'me', id: messageId, format: 'metadata', metadataHeaders: ['From', 'Subject', 'Message-ID'] });
-    const from = originalMsg.data.payload.headers.find(h => h.name === 'From')?.value;
-    const subject = originalMsg.data.payload.headers.find(h => h.name === 'Subject')?.value;
-    const originalMessageId = originalMsg.data.payload.headers.find(h => h.name === 'Message-ID')?.value;
+    const from = originalMsg.payload.headers.find(h => h.name === 'From')?.value;
+    const subject = originalMsg.payload.headers.find(h => h.name === 'Subject')?.value;
+    const originalMessageId = originalMsg.payload.headers.find(h => h.name === 'Message-ID')?.value;
     const mailOptions = {
         to: from, subject: `Re: ${subject}`,
         html: `${response.replace(/\n/g, '<br/>')}${SIGNATURE}`,
@@ -253,13 +266,11 @@ app.post('/api/send', async (req, res) => {
   }
 });
 
-// --- Server Start ---
+// --- Server Start & Frontend Serving ---
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
   fetchAndCacheEmails(); 
   setInterval(fetchAndCacheEmails, 60 * 1000); 
 });
-
-// --- Frontend Serving ---
 app.use(express.static(path.join(__dirname, 'frontend/dist')));
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'frontend/dist/index.html')));
