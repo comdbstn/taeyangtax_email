@@ -34,7 +34,21 @@ const EmailListItem = ({ email, active, onClick }) => (
 
 const ResponseCard = ({ response, onUpdate, onSend, isSending }) => (
     <div className="response-card">
-      <textarea className="response-textarea" value={response.text} onChange={(e) => onUpdate(e.target.value)} disabled={isSending}/>
+      <input
+        type="text"
+        className="response-subject-input"
+        value={response.subject}
+        onChange={(e) => onUpdate('subject', e.target.value)}
+        disabled={isSending}
+        placeholder="Email Subject"
+      />
+      <textarea
+        className="response-textarea"
+        value={response.body}
+        onChange={(e) => onUpdate('body', e.target.value)}
+        disabled={isSending}
+        placeholder="Email Body"
+      />
       <button className="send-btn" onClick={onSend} disabled={isSending}>{isSending ? 'Sending...' : 'Send this response'}</button>
     </div>
 );
@@ -92,18 +106,22 @@ const EmailDetail = ({ email, attachments, onSendSuccess, showToast, signature }
   const [responses, setResponses] = useState([]);
   const [isSending, setIsSending] = useState(false);
   const [selectedAttachments, setSelectedAttachments] = useState({});
+  
   useEffect(() => {
-    if (email) {
-      setResponses((email.aiResponses || []).map(text => ({ text })));
+    if (email && email.aiResponses) {
+      setResponses(email.aiResponses);
       setSelectedAttachments({}); 
     }
   }, [email]);
+
   const handleAttachmentChange = (fileName) => setSelectedAttachments(prev => ({ ...prev, [fileName]: !prev[fileName] }));
-  const handleResponseUpdate = (index, newText) => {
+  
+  const handleResponseUpdate = (index, field, value) => {
     const newResponses = [...responses];
-    newResponses[index].text = newText;
+    newResponses[index] = { ...newResponses[index], [field]: value };
     setResponses(newResponses);
   };
+
   const handleSend = async (index) => {
     if (!email || isSending) return;
     setIsSending(true);
@@ -112,7 +130,7 @@ const EmailDetail = ({ email, attachments, onSendSuccess, showToast, signature }
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           threadId: email.threadId, messageId: email.messageId,
-          response: responses[index].text,
+          response: responses[index],
           attachments: Object.keys(selectedAttachments).filter(key => selectedAttachments[key])
         })
       });
@@ -125,6 +143,9 @@ const EmailDetail = ({ email, attachments, onSendSuccess, showToast, signature }
 
   if (!email) return <div className="detail-container placeholder">Select an email to view details.</div>;
   
+  // A simple way to check if the sender is "me" (Taeyang Tax)
+  const isFromMe = (from) => /taeyang/i.test(from) || /info@/i.test(from);
+
   return (
     <div className="detail-container">
       <div className="detail-header">
@@ -132,17 +153,22 @@ const EmailDetail = ({ email, attachments, onSendSuccess, showToast, signature }
         <p>From: {email.from}</p>
       </div>
       <div className="message-history">
-        {email.messages.map((msg, index) => (
-          <div key={index} className="message-bubble">
-             <div className="message-from">{msg.from.split('<')[0].trim()}</div>
-             <p>{msg.body}</p>
-          </div>
-        ))}
+        {email.messages.map((msg, index) => {
+            const fromMe = isFromMe(msg.from);
+            return (
+                <div key={index} className={`message-container ${fromMe ? 'sent' : 'received'}`}>
+                    <div className="message-bubble">
+                        <div className="message-from">{msg.from.split('<')[0].trim()}</div>
+                        <p>{msg.body}</p>
+                    </div>
+                </div>
+            )
+        })}
       </div>
       <div className="responses-section">
         <h3>AI-Generated Response(s)</h3>
         {responses.length > 0 ? responses.map((res, idx) => (
-          <ResponseCard key={idx} response={res} onUpdate={(newText) => handleResponseUpdate(idx, newText)} onSend={() => handleSend(idx)} isSending={isSending}/>
+          <ResponseCard key={idx} response={res} onUpdate={(field, value) => handleResponseUpdate(idx, field, value)} onSend={() => handleSend(idx)} isSending={isSending}/>
         )) : <p className="error-text">Could not generate AI response for this email.</p>}
       </div>
       <div className="attachments-section">
@@ -328,7 +354,14 @@ const GlobalStyles = () => (
     .detail-container { padding: 2rem 3rem; }
     .detail-container.placeholder { display: flex; align-items: center; justify-content: center; height: 100%; color: var(--text-muted); }
     .message-history { margin-top: 2rem; border-top: 1px solid var(--border-color); padding-top: 2rem; }
-    .message-bubble { background-color: var(--primary); padding: 1rem 1.5rem; border-radius: 12px; margin-bottom: 1rem; }
+    
+    .message-container { display: flex; margin-bottom: 1rem; }
+    .message-container.sent { justify-content: flex-end; }
+    .message-container.received { justify-content: flex-start; }
+    .message-bubble { max-width: 70%; padding: 1rem 1.5rem; border-radius: 12px; }
+    .message-container.received .message-bubble { background-color: var(--primary); }
+    .message-container.sent .message-bubble { background-color: #2c3e50; }
+    
     .message-from { font-weight: bold; margin-bottom: 0.5rem; color: var(--secondary); }
     .message-bubble p { margin: 0; line-height: 1.6; white-space: pre-wrap; }
     .responses-section, .attachments-section, .signature-preview-section { margin-top: 2rem; border-top: 1px solid var(--border-color); padding-top: 2rem; }
@@ -338,6 +371,7 @@ const GlobalStyles = () => (
     .attachment-item label { cursor: pointer; }
     .signature-box { border: 1px solid var(--border-color); padding: 1rem; border-radius: 8px; background-color: var(--bg-light); }
     .response-card { background-color: var(--bg-light); border: 1px solid var(--border-color); border-radius: 10px; margin-bottom: 1.5rem; overflow: hidden; }
+    .response-subject-input { width: 100%; background: transparent; border: none; border-bottom: 1px solid var(--border-color); padding: 1.2rem 1.5rem; color: var(--text-main); font-size: 1.1rem; font-weight: 500; }
     .response-textarea { width: 100%; height: 200px; background: transparent; border: none; padding: 1.5rem; color: var(--text-main); font-size: 1rem; line-height: 1.6; resize: vertical; }
     .send-btn { display: block; width: fit-content; margin: 0 1.5rem 1.5rem auto; background: var(--gradient); border: none; color: white; padding: 10px 20px; border-radius: 8px; font-weight: 500; cursor: pointer; }
     .send-btn:disabled { background: #555; cursor: not-allowed; }

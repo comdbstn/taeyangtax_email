@@ -29,6 +29,12 @@ const SIGNATURE = `
   <strong>카카오톡 ID</strong>: taeyangtax<br/>
   <strong>Email</strong>: info@taeyangtax.com<br/><br/>
   ${logoBase64 ? `<img src="data:image/png;base64,${logoBase64}" alt="Taeyang Tax Service Logo" style="width: 150px;"/>` : ''}
+  <p style="font-size: 11px; color: #555;">
+    Payroll / Sales Tax / QuickBooks<br/>
+    개인 및 비지니스 절세 및 세금보고<br/>
+    FATCA, FBAR 해외금융자산신고<br/>
+    회사설립, 미국 진출 자문 & 컨설팅
+  </p>
 </div>
 `;
 
@@ -107,7 +113,7 @@ function getSimilarSamples(question) {
     return scoredSamples.sort((a, b) => b.score - a.score).slice(0, 2);
 }
 
-async function generateAiResponses(conversationHistory) {
+async function generateAiResponses(conversationHistory, originalSubject) {
   if (!process.env.GEMINI_API_KEY || !conversationHistory) return [];
   
   try {
@@ -118,32 +124,25 @@ async function generateAiResponses(conversationHistory) {
         similarSamples.map(s => `Q: "${s.question}"\nA: "${s.answer}"`).join("\n---\n");
     }
 
-    const prompt = `You are iMate, a professional US tax accountant AI for Taeyang Tax. Analyze the entire email conversation and draft three distinct and different responses in Korean to the last message.
+    const prompt = `You are iMate, a professional US tax accountant AI for Taeyang Tax. Analyze the entire email conversation and the original subject ("${originalSubject}"). Your task is to generate three distinct and professional response options in JSON format.
 
-**Primary Directive: Assess Inquiry Complexity**
-- If the query is too complex, involves significant changes, requires in-depth analysis, or is a new client inquiry that cannot be answered simply, your **FIRST and ONLY response** must be to suggest a paid consultation. Use this exact template:
-"안녕하세요. 
-세무회계태양 입니다. 
+**JSON Structure:**
+Each response must be a JSON object with two keys: "subject" and "body".
+- "subject": A concise and professional email subject in Korean. It should start with "Re: " followed by a summary of the response.
+- "body": The email body in Korean.
 
-보내주신 이메일 확인했습니다. 
-죄송하지만 말씀드릴 내용이 많습니다. 
-그리고 이번에 부터 보고하셔야 할 2024년 세금보고는 작년과 달리 매우 복잡하게 됩니다. 
-질문주신 하나하나가 모두 설명 드릴 것이 많아서요.
+**Directives:**
+1.  **Complexity Assessment:**
+    - If the query is too complex, a new client inquiry, or requires in-depth analysis, generate a **single JSON object** for a paid consultation. The body must be this exact text:
+      "안녕하세요.\\n세무회계태양 입니다.\\n\\n보내주신 이메일 확인했습니다.\\n죄송하지만 말씀드릴 내용이 많습니다.\\n그리고 이번에 부터 보고하셔야 할 2024년 세금보고는 작년과 달리 매우 복잡하게 됩니다.\\n질문주신 하나하나가 모두 설명 드릴 것이 많아서요.\\n\\n괜찮으시다면 유료 상담으로 진행을 하시면 어떨까 여쭙고자 합니다.\\n비용은 100불이며, Zelle로 받습니다.\\nZelle : taxtaeyang@gmail.com ( Taeyang Tax Service)\\n비용 납부해주시고 MA에 계신것으로 알아서 통화시간 맞춰서 통화를 하면 좋겠습니다.\\n\\n바뀌시는것이 너무 많고 중요한것들이기에 상담을 추천드려요. 꼭 필요한"
+    - If the query is simple, proceed to the next directive.
 
-괜찮으시다면 유료 상담으로 진행을 하시면 어떨까 여쭙고자 합니다. 
-비용은 100불이며, Zelle로 받습니다. 
-Zelle : taxtaeyang@gmail.com ( Taeyang Tax Service)
-비용 납부해주시고 MA에 계신것으로 알아서 통화시간 맞춰서 통화를 하면 좋겠습니다. 
-
-바뀌시는것이 너무 많고 중요한것들이기에 상담을 추천드려요. 꼭 필요한"
-- If the query is simple and answerable, proceed to the next directive.
-
-**Secondary Directive: Provide Three Different Solutions (if not suggesting consultation)**
-- The difference must be in the ANSWER/SOLUTION, not just the tone.
-- **Response 1 (Direct Answer):** Provide the most direct and concise solution.
-- **Response 2 (Alternative/Broader Perspective):** Offer a different approach, or explain the broader context and potential future considerations.
-- **Response 3 (Information Request):** Politely ask for specific additional information required to provide a more complete and accurate solution.
-- **Attachment Recommendation:** If a document like a '위임장' or '신청서' is relevant, mention it in the response (e.g., "관련 서류를 첨부해 드립니다.").
+2.  **Three Response Options (for simple queries):**
+    Generate an array of **three separate JSON objects**. The difference must be in the solution/answer, not just the tone.
+    - **Response 1 (Direct Answer):** The most direct solution.
+    - **Response 2 (Alternative/Broader Perspective):** A different approach or broader context.
+    - **Response 3 (Information Request):** Ask for more information to provide a better solution.
+    - **Attachment Hint:** If a document is relevant, mention it in the body (e.g., "관련 서류를 첨부해 드립니다.").
 
 **Reference Styles:**
 ${ragContext}
@@ -153,19 +152,31 @@ ${ragContext}
 ${conversationHistory}
 ---
 
-Generate responses based on the full conversation and all directives.`;
+**IMPORTANT:** Respond with a valid JSON array containing the response objects. Do not include any text outside the JSON structure. For a single response, wrap the object in an array.`;
 
     const geminiRes = await axios.post(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro-latest:generateContent?key=${process.env.GEMINI_API_KEY}`,
-      { contents: [{ role: 'user', parts: [{ text: prompt }] }] },
+      { 
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        generationConfig: {
+          responseMimeType: "application/json",
+        }
+      },
       { headers: { 'Content-Type': 'application/json' } }
     );
-    const text = geminiRes.data.candidates?.[0]?.content?.parts?.[0]?.text || "죄송합니다. 답변을 생성할 수 없습니다.";
-    if (text.includes("유료 상담으로 진행")) return [text.trim()];
-    return text.split(/Response \d+\s\(.+\):/).map(s => s.trim()).filter(Boolean);
+    const rawText = geminiRes.data.candidates?.[0]?.content?.parts?.[0]?.text || "[]";
+    try {
+      // The response is expected to be a JSON array of objects
+      const responses = JSON.parse(rawText);
+      return Array.isArray(responses) ? responses : [responses]; // Ensure it's always an array
+    } catch (parseError) {
+      console.error('JSON Parse Error:', parseError);
+      console.error('Raw Gemini Response:', rawText);
+      return [{ subject: "Error", body: "AI 응답을 파싱하는 데 실패했습니다. 원본 텍스트를 확인하세요:\n" + rawText }];
+    }
   } catch(e) {
-    console.error('Gemini API Error:', e.response ? e.response.data.error : e.message);
-    return ["AI 응답 생성에 실패했습니다. 서버 로그를 확인해주세요."];
+    console.error('Gemini API Error:', e.response ? JSON.stringify(e.response.data.error) : e.message);
+    return [{ subject: "API Error", body: "AI 응답 생성에 실패했습니다. 서버 로그를 확인해주세요." }];
   }
 }
 
@@ -204,7 +215,7 @@ async function fetchAndCacheEmails() {
                 subject: lastMessage.payload.headers.find(h => h.name === 'Subject')?.value || '',
                 snippet: lastMessage.snippet, historyId: lastMessage.historyId,
                 messages: messages.map(m => ({ id: m.id, from: m.payload.headers.find(h => h.name === 'From')?.value || '', body: parseEmailBody(m.payload) })),
-                aiResponses: await generateAiResponses(conversationHistory), replied: false,
+                aiResponses: await generateAiResponses(conversationHistory, lastMessage.payload.headers.find(h => h.name === 'Subject')?.value || ''), replied: false,
             };
             newUnreplied.push(threadData);
         }
@@ -234,8 +245,12 @@ app.delete('/api/attachments/:filename', (req, res) => {
 app.post('/api/send', async (req, res) => {
   try {
     const { threadId, messageId, response, attachments = [] } = req.body;
+    if (!response || !response.subject || !response.body) {
+      return res.status(400).json({ error: 'Response must include a subject and body.' });
+    }
+
     const gmail = getGmailClient();
-    const originalMsg = await gmail.users.messages.get({ userId: 'me', id: messageId, format: 'metadata', metadataHeaders: ['From', 'Subject', 'Message-ID'] });
+    const originalMsg = await gmail.users.messages.get({ userId: 'me', id: messageId, format: 'metadata', metadataHeaders: ['From', 'Message-ID'] });
 
     const payload = originalMsg.data.payload;
     if (!payload || !payload.headers) {
@@ -244,15 +259,17 @@ app.post('/api/send', async (req, res) => {
     }
 
     const from = payload.headers.find(h => h.name === 'From')?.value;
-    const subject = payload.headers.find(h => h.name === 'Subject')?.value;
     const originalMessageId = payload.headers.find(h => h.name === 'Message-ID')?.value;
     
     const mailOptions = {
-        to: from, subject: `Re: ${subject}`,
-        html: `${response.replace(/\n/g, '<br/>')}${SIGNATURE}`,
-        inReplyTo: originalMessageId, references: originalMessageId,
+        to: from, 
+        subject: response.subject,
+        html: `${response.body.replace(/\n/g, '<br/>')}${SIGNATURE}`,
+        inReplyTo: originalMessageId, 
+        references: originalMessageId,
         attachments: attachments.map(fileName => ({ filename: fileName, path: path.join(__dirname, 'public/attachments', fileName) }))
     };
+    
     const mailComposer = new MailComposer(mailOptions);
     const rawMessage = await mailComposer.compile().build();
     const encodedMessage = Buffer.from(rawMessage).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
