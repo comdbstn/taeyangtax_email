@@ -6,6 +6,19 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [sentIdx, setSentIdx] = useState(null);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [password, setPassword] = useState('');
+  const [authError, setAuthError] = useState('');
+
+  const handlePasswordSubmit = (e) => {
+    e.preventDefault();
+    if (password === 'Taeyangtax1!!!') {
+      setIsAuthenticated(true);
+      setAuthError('');
+    } else {
+      setAuthError('비밀번호가 올바르지 않습니다.');
+    }
+  };
 
   // 이메일 불러오기 함수
   const fetchEmail = async () => {
@@ -32,8 +45,10 @@ function App() {
 
   // 앱 시작 시 이메일 1회 불러오기
   useEffect(() => {
-    fetchEmail();
-  }, []);
+    if (isAuthenticated) {
+      fetchEmail();
+    }
+  }, [isAuthenticated]);
 
   // AI 답변 생성 함수
   const generateResponses = async () => {
@@ -88,6 +103,40 @@ function App() {
       setError('답변을 전송하는 데 실패했습니다.');
     }
   };
+
+  if (!isAuthenticated) {
+    return (
+      <div className="container" style={{ textAlign: 'center', paddingTop: '100px' }}>
+        <header className="brand">
+          <span className="brand-main">taeyang</span>
+          <span className="brand-x"> X </span>
+          <span className="brand-sub">iMate</span>
+        </header>
+        <form onSubmit={handlePasswordSubmit}>
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="비밀번호를 입력하세요"
+            style={{ padding: '10px', fontSize: '1rem', borderRadius: '8px', border: '1px solid #ccc', marginRight: '10px' }}
+          />
+          <button type="submit" className="main-btn" style={{ width: 'auto', padding: '10px 20px' }}>
+            입장
+          </button>
+        </form>
+        {authError && <p style={{ color: 'red', marginTop: '10px' }}>{authError}</p>}
+        <style>{`
+          body { margin: 0; background: #f8fafc; }
+          .container { max-width: 700px; margin: 0 auto; padding: 24px 12px 48px 12px; font-family: 'Pretendard', sans-serif; min-height: 100vh; }
+          .brand { display: flex; justify-content: center; align-items: center; font-size: 2rem; font-weight: 700; margin-bottom: 32px; letter-spacing: 1px; }
+          .brand-main { color: #ffb300; }
+          .brand-x { color: #888; margin: 0 8px; }
+          .brand-sub { color: #1976d2; }
+          .main-btn { background: linear-gradient(90deg, #ffb300 0%, #1976d2 100%); color: #fff; border: none; border-radius: 8px; font-size: 1.1rem; font-weight: 600; cursor: pointer; }
+        `}</style>
+      </div>
+    );
+  }
 
   return (
     <div className="container">
