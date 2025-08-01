@@ -22,7 +22,8 @@ const SIGNATURE = `
 `;
 
 
-// --- Components (PasswordScreen, EmailListItem, ResponseCard are unchanged) ---
+// --- Components ---
+
 const Toast = ({ message, show, onDismiss }) => {
   useEffect(() => {
     if (show) {
@@ -82,7 +83,6 @@ const ResponseCard = ({ response, onUpdate, onSend, isSending }) => {
   );
 };
 
-
 const AttachmentManager = ({ attachments, onClose, onUploadSuccess, onDeleteSuccess, showToast }) => {
     const [isUploading, setIsUploading] = useState(false);
     const fileInputRef = useRef(null);
@@ -117,7 +117,8 @@ const AttachmentManager = ({ attachments, onClose, onUploadSuccess, onDeleteSucc
         if (!window.confirm(`Are you sure you want to delete '${filename}'?`)) return;
 
         try {
-            const res = await fetch(`/api/attachments/${filename}`, { method: 'DELETE' });
+            const encodedFilename = encodeURIComponent(filename);
+            const res = await fetch(`/api/attachments/${encodedFilename}`, { method: 'DELETE' });
             if (!res.ok) throw new Error('Delete failed');
             showToast(`'${filename}' deleted successfully.`);
             onDeleteSuccess();
@@ -160,7 +161,7 @@ const EmailDetail = ({ email, attachments, onSendSuccess, showToast }) => {
   useEffect(() => {
     if (email) {
       setResponses(email.aiResponses.map(text => ({ text })));
-      setSelectedAttachments({}); // Reset attachments when email changes
+      setSelectedAttachments({}); 
     }
   }, [email]);
 
@@ -222,7 +223,7 @@ const EmailDetail = ({ email, attachments, onSendSuccess, showToast }) => {
         ))}
       </div>
       <div className="responses-section">
-        <h3>AI-Generated Responses</h3>
+        <h3>AI-Generated Response</h3>
         {responses.length > 0 ? responses.map((res, idx) => (
           <ResponseCard
             key={idx}
@@ -231,7 +232,7 @@ const EmailDetail = ({ email, attachments, onSendSuccess, showToast }) => {
             onSend={() => handleSend(idx)}
             isSending={isSending}
           />
-        )) : <p className="error-text">Could not generate AI responses for this email.</p>}
+        )) : <p className="error-text">Could not generate AI response for this email.</p>}
       </div>
 
       <div className="attachments-section">

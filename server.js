@@ -17,8 +17,9 @@ const storage = multer.diskStorage({
         cb(null, 'public/attachments/')
     },
     filename: function (req, file, cb) {
-        // Use originalname to keep the uploaded file's name
-        cb(null, file.originalname)
+        // Fix for handling UTF-8 filenames
+        const decodedFilename = Buffer.from(file.originalname, 'latin1').toString('utf-8');
+        cb(null, decodedFilename);
     }
 });
 const upload = multer({ storage: storage });
@@ -31,8 +32,24 @@ app.use('/attachments', express.static(path.join(__dirname, 'public/attachments'
 // --- Constants (Signature) ---
 const SIGNATURE = `
 <br/><br/>
-...
-`; // (Signature content is omitted for brevity)
+--
+<br/>
+<p style="font-size: 12px; color: #888;">
+  <strong>TAEYANG TAX SERVICE</strong><br/>
+  780 Roosevelt, #209, Irvine, CA 92620<br/>
+  <strong>Office</strong>: 949 546 7979 / <strong>Fax</strong>: 949 296 4030<br/>
+  <strong>카카오톡 ID</strong>: taeyangtax<br/>
+  <strong>Email</strong>: info@taeyangtax.com<br/>
+  <img src="cid:logo" alt="Taeyang Tax Service Logo" style="width: 150px; margin-top: 10px;"/>
+</p>
+<p style="font-size: 11px; color: #aaa;">
+  Payroll / Sales Tax / QuickBooks<br/>
+  개인 및 비지니스 절세 및 세금보고<br/>
+  FATCA, FBAR 해외금융자산신고<br/>
+  회사설립, 미국 진출 자문 & 컨설팅
+</p>
+`;
+
 
 // --- Cache ---
 let emailCache = { unreplied: [], replied: [] };
@@ -40,13 +57,18 @@ let isCacheUpdating = false;
 
 // --- Load Email Samples for RAG ---
 let emailSamples = [];
-// (Loading logic is omitted for brevity)
+try {
+  const samplesData = fs.readFileSync(path.join(__dirname, 'email_samples.json'), 'utf-8');
+  emailSamples = JSON.parse(samplesData);
+  console.log(`Successfully loaded ${emailSamples.length} email samples.`);
+} catch (error) {
+  console.error('Could not read or parse email_samples.json. Proceeding without samples.', error);
+}
 
 app.use(cors());
 app.use(express.json());
 
-// --- Helper Functions (getGmailClient, parseEmailBody, getSimilarSamples, generateAiResponses) ---
-// (Helper functions are omitted for brevity, they remain the same)
+// --- Helper Functions ---
 function getGmailClient() {
   if (!process.env.GMAIL_CLIENT_ID || !process.env.GMAIL_CLIENT_SECRET || !process.env.GMAIL_REFRESH_TOKEN) {
     throw new Error('Gmail API environment variables are not set.');
@@ -71,18 +93,12 @@ function parseEmailBody(parts) {
         }
         return null;
     };
-
     let textBody = findTextPart(parts);
-
-    if (textBody) {
-        return textBody;
-    }
-
+    if (textBody) return textBody;
     const nonMultipart = parts[0];
     if (nonMultipart && nonMultipart.body && nonMultipart.body.data) {
         return Buffer.from(nonMultipart.body.data, 'base64').toString('utf-8');
     }
-
     return '';
 }
 
@@ -109,12 +125,30 @@ async function generateAiResponses(conversationHistory) {
         similarSamples.map(s => `Example Question: "${s.question}"\nExample Answer: "${s.answer}"`).join("\n\n---\n\n");
     }
 
-    const prompt = `You are a professional and courteous US tax accountant named iMate, an AI assistant for Taeyang Tax. Your task is to analyze an entire email conversation and then draft three distinct, polite, and natural-sounding responses in Korean to the last message in the thread.
+    const prompt = `You are a professional and courteous US tax accountant named iMate, an AI assistant for Taeyang Tax. Your task is to analyze an entire email conversation and then draft ONE single, perfect response in Korean to the last message in the thread.
 
-**Key Instructions:**
-1.  **Full Context Analysis:** Read the entire conversation history to understand the full context, previous questions, and provided answers.
-2.  **Smart Attachment Recommendation:** If the conversation suggests a file is needed (e.g., the user is asking for a form, or a process requires a document like a '위임장' or '신청서'), mention in your response that the relevant file is attached. For example, write "요청하신 업무에 필요한 위임장 파일을 함께 첨부해 드립니다."
-3.  **Tone and Style:** Generate three options: Friendly & direct, Formal & detailed, and Concise & reassuring.
+**VERY IMPORTANT INSTRUCTIONS:**
+1.  **Full Context Analysis:** Read the entire conversation history to understand the full context, previous questions, and provided answers. Your response MUST be relevant to the entire conversation.
+2.  **Identify Complex Queries & Suggest Paid Consultation:** This is your most important task. If a question is too complex, involves significant changes, or requires in-depth consultation, your primary response should be to politely suggest a paid consultation. **Use the following example as your template for this situation.**
+    
+    **Example for suggesting paid consultation:**
+    "안녕하세요. 
+    세무회계태양 입니다. 
+
+    보내주신 이메일 확인했습니다. 
+    죄송하지만 말씀드릴 내용이 많습니다. 
+    그리고 이번에 부터 보고하셔야 할 2024년 세금보고는 작년과 달리 매우 복잡하게 됩니다. 
+    질문주신 하나하나가 모두 설명 드릴 것이 많아서요.
+
+    괜찮으시다면 유료 상담으로 진행을 하시면 어떨까 여쭙고자 합니다. 
+    비용은 100불이며, Zelle로 받습니다. 
+    Zelle : taxtaeyang@gmail.com ( Taeyang Tax Service)
+    비용 납부해주시고 MA에 계신것으로 알아서 통화시간 맞춰서 통화를 하면 좋겠습니다. 
+
+    바뀌시는것이 너무 많고 중요한것들이기에 상담을 추천드려요. 꼭 필요한"
+    
+3.  **Smart Attachment Recommendation:** If the conversation suggests a file is needed (e.g., the user is asking for a form, or a process requires a document like a '위임장' or '신청서'), mention in your response that the relevant file is attached. For example, write "요청하신 업무에 필요한 위임장 파일을 함께 첨부해 드립니다."
+4.  **Do NOT offer multiple response options.** Based on your analysis, provide only the single best response.
 
 **Past Successful Response Examples (for style reference):**
 ${ragContext}
@@ -124,26 +158,22 @@ ${ragContext}
 ${conversationHistory}
 ---
 
-Based on the **full conversation**, generate three complete, ready-to-send Korean responses to the **last message** of the thread.
-
-Response 1 (Friendly and direct style):
-Response 2 (Formal and detailed style):
-Response 3 (Concise and reassuring style):`;
+Based on the **full conversation and all instructions**, generate the single best, ready-to-send Korean response to the **last message** of the thread.`;
 
     const geminiRes = await axios.post(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro-latest:generateContent?key=${process.env.GEMINI_API_KEY}`,
       { contents: [{ role: 'user', parts: [{ text: prompt }] }] },
       { headers: { 'Content-Type': 'application/json' } }
     );
-    const text = geminiRes.data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-    return text.split(/Response \d+\s\(.+\):/).map(s => s.trim()).filter(Boolean);
+    const text = geminiRes.data.candidates?.[0]?.content?.parts?.[0]?.text || "죄송합니다. 답변을 생성할 수 없습니다.";
+    // Since we now request only one response, we return it in an array to maintain the data structure.
+    return [text.trim()];
   } catch(e) {
     console.error('Gemini API Error:', e.response ? e.response.data.error : e.message);
-    return ["AI 응답 생성에 실패했습니다.", "API 키 또는 모델 설정을 확인하세요.", "서버 로그를 확인해주세요."];
+    return ["AI 응답 생성에 실패했습니다. 서버 로그를 확인해주세요."];
   }
 }
-// --- Background Caching Logic (fetchAndCacheEmails) ---
-// (Caching logic is omitted for brevity, it remains the same)
+
 async function fetchAndCacheEmails() {
     if (isCacheUpdating) {
         console.log('Cache update already in progress. Skipping.');
@@ -217,19 +247,14 @@ async function fetchAndCacheEmails() {
         isCacheUpdating = false;
     }
 }
-// --- API Routes ---
 
-app.get('/api/threads', (req, res) => {
-  res.json(emailCache);
-});
+// --- API Routes ---
+app.get('/api/threads', (req, res) => { res.json(emailCache); });
 
 app.get('/api/attachments', (req, res) => {
     const directoryPath = path.join(__dirname, 'public/attachments');
     fs.readdir(directoryPath, (err, files) => {
-        if (err) {
-            console.error("Could not list the directory.", err);
-            return res.status(500).send('Unable to scan attachments directory.');
-        }
+        if (err) { return res.status(500).send('Unable to scan attachments directory.'); }
         res.json(files.filter(file => file !== '.gitkeep'));
     });
 });
@@ -240,17 +265,12 @@ app.post('/api/upload', upload.single('attachment'), (req, res) => {
 
 app.delete('/api/attachments/:filename', (req, res) => {
     const filename = req.params.filename;
-    // Basic security check to prevent directory traversal
     if (filename.includes('..') || filename.includes('/')) {
         return res.status(400).send('Invalid filename.');
     }
     const filePath = path.join(__dirname, 'public/attachments', filename);
-
     fs.unlink(filePath, (err) => {
-        if (err) {
-            console.error("Error deleting file:", err);
-            return res.status(500).send('Failed to delete file.');
-        }
+        if (err) { return res.status(500).send('Failed to delete file.'); }
         res.status(200).json({ message: 'File deleted successfully' });
     });
 });
@@ -259,13 +279,10 @@ app.post('/api/send', async (req, res) => {
   try {
     const { threadId, messageId, response, attachments = [] } = req.body;
     const gmail = getGmailClient();
-    
     const originalMsg = await gmail.users.messages.get({ userId: 'me', id: messageId, format: 'metadata', metadataHeaders: ['From', 'Subject', 'Message-ID'] });
-    
     const from = originalMsg.data.payload.headers.find(h => h.name === 'From')?.value;
     const subject = originalMsg.data.payload.headers.find(h => h.name === 'Subject')?.value;
     const originalMessageId = originalMsg.data.payload.headers.find(h => h.name === 'Message-ID')?.value;
-
     const mailOptions = {
         to: from,
         subject: `Re: ${subject}`,
@@ -277,42 +294,26 @@ app.post('/api/send', async (req, res) => {
             path: path.join(__dirname, 'public/attachments', fileName)
         }))
     };
-    
     mailOptions.attachments.push({
         filename: 'logo.png',
         path: path.join(__dirname, 'public', 'logo.png'),
         cid: 'logo'
     });
-
     const mailComposer = nodemailer.createTransport({}).mail.compile(mailOptions);
     const rawMessage = await mailComposer.build();
-
     const encodedMessage = Buffer.from(rawMessage).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-
-    await gmail.users.messages.send({
-      userId: 'me',
-      requestBody: { raw: encodedMessage, threadId }
-    });
-    
-    await gmail.users.threads.modify({
-        userId: 'me',
-        id: threadId,
-        requestBody: { removeLabelIds: ['UNREAD'] }
-    });
-
+    await gmail.users.messages.send({ userId: 'me', requestBody: { raw: encodedMessage, threadId } });
+    await gmail.users.threads.modify({ userId: 'me', id: threadId, requestBody: { removeLabelIds: ['UNREAD'] } });
     emailCache.unreplied = emailCache.unreplied.filter(t => t.threadId !== threadId);
     fetchAndCacheEmails();
-
     res.json({ success: true });
   } catch (e) {
     console.error('Error sending email:', e);
-    console.error('Detailed error:', e.message, e.stack);
     res.status(500).json({ error: 'Failed to send email', detail: e.message });
   }
 });
 
 // --- Frontend Serving & Server Start ---
-// (This part is omitted for brevity, it remains the same)
 const buildPath = path.join(__dirname, 'frontend/dist');
 app.use(express.static(buildPath));
 app.get('*', (req, res) => {
