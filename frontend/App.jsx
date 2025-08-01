@@ -30,28 +30,30 @@ const EmailListItem = ({ email, active, onClick }) => (
     <div className="email-item-from">{email.from.split('<')[0].trim()}</div>
     <div className="email-item-subject">{email.subject}</div>
     <div className="email-item-snippet">{email.snippet}</div>
+    {/* replied 상태를 기반으로 점 표시 여부 결정 */}
     {!email.replied && <div className="unread-dot"></div>}
   </div>
 );
 
-const ResponseCard = ({ response, onUpdate, onSend }) => {
+const ResponseCard = ({ response, onUpdate, onSend, isSending }) => {
   return (
     <div className="response-card">
       <textarea
         className="response-textarea"
         value={response.text}
         onChange={(e) => onUpdate(e.target.value)}
+        disabled={isSending}
       />
-      <button className="send-btn" onClick={onSend}>
-        Send this response
+      <button className="send-btn" onClick={onSend} disabled={isSending}>
+        {isSending ? 'Sending...' : 'Send this response'}
       </button>
     </div>
   );
 };
 
-
-const EmailDetail = ({ email }) => {
+const EmailDetail = ({ email, onSendSuccess }) => {
   const [responses, setResponses] = useState([]);
+  const [isSending, setIsSending] = useState(false);
 
   useEffect(() => {
     if (email) {
@@ -66,24 +68,27 @@ const EmailDetail = ({ email }) => {
   };
 
   const handleSend = async (index) => {
-     if (!email) return;
-     try {
-       const res = await fetch('/api/send', {
-         method: 'POST',
-         headers: { 'Content-Type': 'application/json' },
-         body: JSON.stringify({ 
-             threadId: email.threadId, 
-             messageId: email.messageId, 
-             response: responses[index].text 
-         })
-       });
-       if (!res.ok) throw new Error(`Server Error: ${res.status}`);
-       alert('Response sent successfully!');
-       // TODO: Refresh or move the email to the replied list
-     } catch (err) {
-       console.error('Failed to send:', err);
-       alert('Failed to send response. Check server logs.');
-     }
+    if (!email || isSending) return;
+    setIsSending(true);
+    try {
+      const res = await fetch('/api/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+            threadId: email.threadId, 
+            messageId: email.messageId, 
+            response: responses[index].text 
+        })
+      });
+      if (!res.ok) throw new Error(`Server Error: ${res.status}`);
+      alert('Response sent successfully!');
+      onSendSuccess(email.threadId); // 부모 컴포넌트에 알림
+    } catch (err) {
+      console.error('Failed to send:', err);
+      alert('Failed to send response. Check server logs.');
+    } finally {
+      setIsSending(false);
+    }
   };
 
   if (!email) {
@@ -116,13 +121,13 @@ const EmailDetail = ({ email }) => {
             response={res}
             onUpdate={(newText) => handleResponseUpdate(idx, newText)}
             onSend={() => handleSend(idx)}
+            isSending={isSending}
           />
         ))}
       </div>
     </div>
   );
 };
-
 
 // --- Main App ---
 
@@ -154,6 +159,10 @@ function App() {
       setReplied(data.replied || []);
       if (data.unreplied?.length > 0) {
         setActiveThreadId(data.unreplied[0].threadId);
+      } else if (data.replied?.length > 0) {
+        setActiveThreadId(data.replied[0].threadId);
+      } else {
+        setActiveThreadId(null);
       }
     } catch (err) {
       setError('Failed to load email threads. Check server logs.');
@@ -170,6 +179,25 @@ function App() {
     } else {
       setAuthError('Incorrect password.');
       setPassword('');
+    }
+  };
+  
+  const handleSendSuccess = (sentThreadId) => {
+    const sentEmail = unreplied.find(t => t.threadId === sentThreadId);
+    if (sentEmail) {
+        sentEmail.replied = true; // Mark as replied
+        setUnreplied(unreplied.filter(t => t.threadId !== sentThreadId));
+        setReplied([sentEmail, ...replied]);
+
+        // Select next unreplied email or first replied email
+        const nextUnreplied = unreplied.filter(t => t.threadId !== sentThreadId);
+        if(nextUnreplied.length > 0) {
+            setActiveThreadId(nextUnreplied[0].threadId);
+        } else if (replied.length > 0) {
+            setActiveThreadId(replied[0].threadId)
+        } else {
+            setActiveThreadId(null);
+        }
     }
   };
   
@@ -200,6 +228,7 @@ function App() {
                 />
              ))}
              {error && <p className="error-text">{error}</p>}
+             { !loading && unreplied.length === 0 && <p className="empty-list-text">No unreplied emails.</p>}
           </nav>
 
           <nav className="email-list replied-list">
@@ -216,7 +245,7 @@ function App() {
 
         </aside>
         <main className="main-content">
-          <EmailDetail email={activeEmail} />
+          <EmailDetail email={activeEmail} onSendSuccess={handleSendSuccess} />
         </main>
       </div>
       <GlobalStyles />
@@ -258,7 +287,7 @@ const GlobalStyles = () => (
 
     /* --- Main Layout --- */
     .app-container { display: grid; grid-template-columns: 320px 1fr; height: 100vh; }
-    .sidebar { background-color: var(--bg-light); padding: 1.5rem; border-right: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 2rem; }
+    .sidebar { background-color: var(--bg-light); padding: 1.5rem; border-right: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 2rem; overflow-y: auto; }
     .main-content { overflow-y: auto; }
     
     .brand { font-size: 1.8rem; font-weight: 700; text-align: center; }
@@ -267,7 +296,8 @@ const GlobalStyles = () => (
     .brand-sub { color: #5372f0; }
 
     .email-list h3 { margin: 0 0 1rem; font-size: 1rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; }
-    .replied-list { margin-top: 2rem; }
+    .replied-list { margin-top: auto; padding-top: 2rem; border-top: 1px solid var(--border-color); }
+    .empty-list-text { color: var(--text-muted); font-style: italic; text-align: center; font-size: 0.9rem; }
     
     /* --- Email List Item --- */
     .email-item { padding: 1rem; border-radius: 8px; cursor: pointer; border-left: 3px solid transparent; position: relative; }
@@ -296,6 +326,7 @@ const GlobalStyles = () => (
     .response-card { background-color: var(--bg-light); border-radius: 10px; margin-bottom: 1.5rem; }
     .response-textarea { width: 100%; height: 150px; background: transparent; border: none; padding: 1.5rem; color: var(--text-main); font-size: 1rem; line-height: 1.6; resize: vertical; border-bottom: 1px solid var(--border-color); }
     .send-btn { display: block; width: fit-content; margin: 1rem 1.5rem 1.5rem auto; background: var(--gradient); border: none; color: white; padding: 10px 20px; border-radius: 8px; font-weight: 500; cursor: pointer; }
+    .send-btn:disabled { background: #555; cursor: not-allowed; }
     
     .error-text { color: var(--secondary); }
 
