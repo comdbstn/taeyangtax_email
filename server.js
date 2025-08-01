@@ -193,7 +193,7 @@ async function fetchAndCacheEmails() {
 
             const threadRes = await gmail.users.threads.get({ userId: 'me', id: threadHeader.id, format: 'full' });
             const messages = threadRes.data.messages || [];
-            if (messages.length === 0 || messages.some(m => m.labelIds.includes('SENT'))) continue;
+            if (messages.length === 0 || messages.some(m => m.labelIds && m.labelIds.includes('SENT'))) continue;
 
             // Pass the entire payload to the robust parser
             const conversationHistory = messages.map(msg => `From: ${msg.payload.headers.find(h => h.name === 'From')?.value || 'Unknown'}\n\n${parseEmailBody(msg.payload)}`).join('\n\n--- Next Message ---\n\n');
