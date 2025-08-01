@@ -1,198 +1,313 @@
 import React, { useEffect, useState } from 'react';
 
-function App() {
-  const [email, setEmail] = useState(null);
+// --- Components ---
+
+const PasswordScreen = ({ onSubmit, password, setPassword, error }) => (
+  <div className="auth-container">
+    <header className="brand">
+      <span className="brand-main">taeyang</span>
+      <span className="brand-x">X</span>
+      <span className="brand-sub">iMate</span>
+    </header>
+    <form onSubmit={onSubmit} className="auth-form">
+      <input
+        type="password"
+        value={password}
+        onChange={(e) => setPassword(e.target.value)}
+        placeholder="Enter Access Code"
+        className="auth-input"
+      />
+      <button type="submit" className="auth-button">
+        Enter
+      </button>
+    </form>
+    {error && <p className="auth-error">{error}</p>}
+  </div>
+);
+
+const EmailListItem = ({ email, active, onClick }) => (
+  <div className={`email-item ${active ? 'active' : ''}`} onClick={onClick}>
+    <div className="email-item-from">{email.from.split('<')[0].trim()}</div>
+    <div className="email-item-subject">{email.subject}</div>
+    <div className="email-item-snippet">{email.snippet}</div>
+    {!email.replied && <div className="unread-dot"></div>}
+  </div>
+);
+
+const ResponseCard = ({ response, onUpdate, onSend }) => {
+  return (
+    <div className="response-card">
+      <textarea
+        className="response-textarea"
+        value={response.text}
+        onChange={(e) => onUpdate(e.target.value)}
+      />
+      <button className="send-btn" onClick={onSend}>
+        Send this response
+      </button>
+    </div>
+  );
+};
+
+
+const EmailDetail = ({ email }) => {
   const [responses, setResponses] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [sentIdx, setSentIdx] = useState(null);
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [password, setPassword] = useState('');
-  const [authError, setAuthError] = useState('');
 
-  const handlePasswordSubmit = (e) => {
-    e.preventDefault();
-    if (password === 'Taeyangtax1!!!') {
-      setIsAuthenticated(true);
-      setAuthError('');
-    } else {
-      setAuthError('비밀번호가 올바르지 않습니다.');
-    }
-  };
-
-  // 이메일 불러오기 함수
-  const fetchEmail = async () => {
-    setLoading(true);
-    setError('');
-    try {
-      const res = await fetch('/api/emails');
-      if (!res.ok) {
-        throw new Error(`서버 오류: ${res.status}`);
-      }
-      const data = await res.json();
-      if (data.email) {
-        setEmail(data.email);
-      } else {
-        setError('새로운 이메일이 없습니다.');
-      }
-    } catch (err) {
-      console.error('이메일 로딩 실패:', err);
-      setError('이메일을 불러오는 데 실패했습니다. 서버 로그를 확인하세요.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // 앱 시작 시 이메일 1회 불러오기
   useEffect(() => {
-    if (isAuthenticated) {
-      fetchEmail();
+    if (email) {
+      setResponses(email.aiResponses.map(text => ({ text })));
     }
-  }, [isAuthenticated]);
+  }, [email]);
 
-  // AI 답변 생성 함수
-  const generateResponses = async () => {
-    if (!email) {
-      setError('답변을 생성할 이메일이 없습니다.');
-      return;
-    }
-    setLoading(true);
-    setError('');
-    setResponses([]); // 이전 답변 초기화
-    try {
-      const res = await fetch('/api/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email,
-          examples: [
-            "ITIN 신청은 IRS(미국 국세청)에서 발급하는 개인 납세자 식별번호입니다...",
-            "안녕하세요. ITIN 관련 문의 감사합니다...",
-            "고객님, ITIN 신청 절차는 다음과 같습니다..."
-          ]
-        })
-      });
-      if (!res.ok) {
-        throw new Error(`서버 오류: ${res.status}`);
-      }
-      const data = await res.json();
-      setResponses(data.responses || []);
-    } catch (err) {
-      console.error('답변 생성 실패:', err);
-      setError('AI 답변을 생성하는 데 실패했습니다.');
-    } finally {
-      setLoading(false);
-    }
+  const handleResponseUpdate = (index, newText) => {
+    const newResponses = [...responses];
+    newResponses[index].text = newText;
+    setResponses(newResponses);
   };
 
-  // 답변 전송 함수
-  const sendResponse = async (idx) => {
-    if (!email) return;
-    try {
-      const res = await fetch('/api/send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ emailId: email.id, response: responses[idx] })
-      });
-      if (!res.ok) {
-        throw new Error(`서버 오류: ${res.status}`);
-      }
-      setSentIdx(idx);
-    } catch (err) {
-      console.error('전송 실패:', err);
-      setError('답변을 전송하는 데 실패했습니다.');
-    }
+  const handleSend = async (index) => {
+     if (!email) return;
+     try {
+       const res = await fetch('/api/send', {
+         method: 'POST',
+         headers: { 'Content-Type': 'application/json' },
+         body: JSON.stringify({ 
+             threadId: email.threadId, 
+             messageId: email.messageId, 
+             response: responses[index].text 
+         })
+       });
+       if (!res.ok) throw new Error(`Server Error: ${res.status}`);
+       alert('Response sent successfully!');
+       // TODO: Refresh or move the email to the replied list
+     } catch (err) {
+       console.error('Failed to send:', err);
+       alert('Failed to send response. Check server logs.');
+     }
   };
 
-  if (!isAuthenticated) {
+  if (!email) {
     return (
-      <div className="container" style={{ textAlign: 'center', paddingTop: '100px' }}>
-        <header className="brand">
-          <span className="brand-main">taeyang</span>
-          <span className="brand-x"> X </span>
-          <span className="brand-sub">iMate</span>
-        </header>
-        <form onSubmit={handlePasswordSubmit}>
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="비밀번호를 입력하세요"
-            style={{ padding: '10px', fontSize: '1rem', borderRadius: '8px', border: '1px solid #ccc', marginRight: '10px' }}
-          />
-          <button type="submit" className="main-btn" style={{ width: 'auto', padding: '10px 20px' }}>
-            입장
-          </button>
-        </form>
-        {authError && <p style={{ color: 'red', marginTop: '10px' }}>{authError}</p>}
-        <style>{`
-          body { margin: 0; background: #f8fafc; }
-          .container { max-width: 700px; margin: 0 auto; padding: 24px 12px 48px 12px; font-family: 'Pretendard', sans-serif; min-height: 100vh; }
-          .brand { display: flex; justify-content: center; align-items: center; font-size: 2rem; font-weight: 700; margin-bottom: 32px; letter-spacing: 1px; }
-          .brand-main { color: #ffb300; }
-          .brand-x { color: #888; margin: 0 8px; }
-          .brand-sub { color: #1976d2; }
-          .main-btn { background: linear-gradient(90deg, #ffb300 0%, #1976d2 100%); color: #fff; border: none; border-radius: 8px; font-size: 1.1rem; font-weight: 600; cursor: pointer; }
-        `}</style>
+      <div className="detail-container placeholder">
+        Select an email to view details.
       </div>
     );
   }
 
   return (
-    <div className="container">
-      <header className="brand">
-        <span className="brand-main">taeyang</span>
-        <span className="brand-x"> X </span>
-        <span className="brand-sub">iMate</span>
-      </header>
-      <main>
-        <h2>고객 이메일 본문</h2>
-        <section className="email-card">
-          {loading && !email && '이메일 로딩 중...'}
-          {email && `[${email.from}] ${email.subject}`}
-          <p style={{ marginTop: '10px', whiteSpace: 'pre-wrap' }}>{email?.body}</p>
-        </section>
-
-        {error && <div className="error-card">{error}</div>}
-
-        <button className="main-btn" onClick={generateResponses} disabled={loading || !email}>
-          {loading && responses.length === 0 ? '생성 중...' : 'AI 답변 3개 생성'}
-        </button>
-
-        <div className="responses">
-          {responses.map((resp, idx) => (
-            <div key={idx} className="response-card">
-              <div className="response-text" style={{ whiteSpace: 'pre-wrap' }}>{resp}</div>
-              <button className="send-btn" onClick={() => sendResponse(idx)} disabled={sentIdx === idx}>
-                {sentIdx === idx ? '전송 완료' : '전송'}
-              </button>
-            </div>
-          ))}
-        </div>
-      </main>
-      <style>{`
-        /* ... 기존 스타일 유지 ... */
-        body { margin: 0; background: #f8fafc; }
-        .container { max-width: 700px; margin: 0 auto; padding: 24px 12px 48px 12px; font-family: 'Pretendard', sans-serif; min-height: 100vh; }
-        .brand { display: flex; justify-content: center; align-items: center; font-size: 2rem; font-weight: 700; margin-bottom: 32px; letter-spacing: 1px; }
-        .brand-main { color: #ffb300; }
-        .brand-x { color: #888; margin: 0 8px; }
-        .brand-sub { color: #1976d2; }
-        h2 { font-size: 1.1rem; color: #222; margin-bottom: 10px; }
-        p { margin: 0; }
-        .email-card { background: #fff; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); padding: 20px 16px; margin-bottom: 24px; font-size: 1rem; color: #333; word-break: break-all; line-height: 1.6; }
-        .error-card { background: #ffebee; color: #c62828; border-radius: 12px; padding: 20px 16px; margin-bottom: 24px; }
-        .main-btn { width: 100%; background: linear-gradient(90deg, #ffb300 0%, #1976d2 100%); color: #fff; border: none; border-radius: 8px; padding: 14px 0; font-size: 1.1rem; font-weight: 600; margin-bottom: 24px; cursor: pointer; transition: background 0.2s; }
-        .main-btn:disabled { background: #eee; color: #aaa; cursor: not-allowed; }
-        .responses { display: flex; flex-direction: column; gap: 16px; }
-        .response-card { background: #fff; border-radius: 10px; box-shadow: 0 1px 4px rgba(0,0,0,0.03); padding: 16px 12px 12px 12px; display: flex; flex-direction: column; align-items: flex-start; }
-        .response-text { font-size: 0.98rem; color: #222; margin-bottom: 10px; line-height: 1.6; width: 100%; }
-        .send-btn { align-self: flex-end; background: #1976d2; color: #fff; border: none; border-radius: 6px; padding: 7px 18px; font-size: 0.98rem; font-weight: 500; cursor: pointer; transition: background 0.2s; }
-        .send-btn:disabled { background: #bbb; color: #eee; cursor: not-allowed; }
-        @media (max-width: 600px) { .container { padding: 12px 2vw 32px 2vw; } .brand { font-size: 1.3rem; margin-bottom: 20px; } .email-card, .response-card { padding: 12px 7px; font-size: 0.97rem; } .main-btn { font-size: 1rem; padding: 10px 0; } }
-      `}</style>
+    <div className="detail-container">
+      <div className="detail-header">
+        <h2>{email.subject}</h2>
+        <p>From: {email.from}</p>
+      </div>
+      <div className="message-history">
+        {email.messages.map((msg, index) => (
+          <div key={index} className="message-bubble">
+             <div className="message-from">{msg.from.split('<')[0].trim()}</div>
+             <p>{msg.body}</p>
+          </div>
+        ))}
+      </div>
+      <div className="responses-section">
+        <h3>AI-Generated Responses</h3>
+        {responses.map((res, idx) => (
+          <ResponseCard
+            key={idx}
+            response={res}
+            onUpdate={(newText) => handleResponseUpdate(idx, newText)}
+            onSend={() => handleSend(idx)}
+          />
+        ))}
+      </div>
     </div>
   );
+};
+
+
+// --- Main App ---
+
+function App() {
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [password, setPassword] = useState('');
+  const [authError, setAuthError] = useState('');
+
+  const [unreplied, setUnreplied] = useState([]);
+  const [replied, setReplied] = useState([]);
+  const [activeThreadId, setActiveThreadId] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      fetchThreads();
+    }
+  }, [isAuthenticated]);
+
+  const fetchThreads = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const res = await fetch('/api/threads');
+      if (!res.ok) throw new Error(`Server Error: ${res.status}`);
+      const data = await res.json();
+      setUnreplied(data.unreplied || []);
+      setReplied(data.replied || []);
+      if (data.unreplied?.length > 0) {
+        setActiveThreadId(data.unreplied[0].threadId);
+      }
+    } catch (err) {
+      setError('Failed to load email threads. Check server logs.');
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handlePasswordSubmit = (e) => {
+    e.preventDefault();
+    if (password === 'Taeyangtax1!!!') {
+      setIsAuthenticated(true);
+    } else {
+      setAuthError('Incorrect password.');
+      setPassword('');
+    }
+  };
+  
+  const activeEmail = unreplied.find(t => t.threadId === activeThreadId) || replied.find(t => t.threadId === activeThreadId);
+
+  if (!isAuthenticated) {
+    return <PasswordScreen onSubmit={handlePasswordSubmit} password={password} setPassword={setPassword} error={authError} />;
+  }
+  
+  return (
+    <>
+      <div className="app-container">
+        <aside className="sidebar">
+          <header className="brand">
+            <span className="brand-main">taeyang</span>
+            <span className="brand-x">X</span>
+            <span className="brand-sub">iMate</span>
+          </header>
+          
+          <nav className="email-list">
+             <h3>Unreplied</h3>
+             {loading ? <p>Loading...</p> : unreplied.map(email => (
+                <EmailListItem 
+                    key={email.threadId} 
+                    email={email} 
+                    active={email.threadId === activeThreadId}
+                    onClick={() => setActiveThreadId(email.threadId)}
+                />
+             ))}
+             {error && <p className="error-text">{error}</p>}
+          </nav>
+
+          <nav className="email-list replied-list">
+             <h3>Replied</h3>
+             {replied.map(email => (
+                <EmailListItem 
+                    key={email.threadId} 
+                    email={email} 
+                    active={email.threadId === activeThreadId}
+                    onClick={() => setActiveThreadId(email.threadId)}
+                />
+             ))}
+          </nav>
+
+        </aside>
+        <main className="main-content">
+          <EmailDetail email={activeEmail} />
+        </main>
+      </div>
+      <GlobalStyles />
+    </>
+  );
 }
+
+// --- Styles ---
+
+const GlobalStyles = () => (
+  <style>{`
+    :root {
+      --bg-dark: #1a1a2e;
+      --bg-light: #16213e;
+      --primary: #0f3460;
+      --secondary: #e94560;
+      --text-main: #ffffff;
+      --text-muted: #a7a9be;
+      --border-color: #3d405b;
+      --gradient: linear-gradient(120deg, #e94560, #0f3460);
+    }
+    
+    * { box-sizing: border-box; }
+    
+    body {
+      margin: 0;
+      background-color: var(--bg-dark);
+      color: var(--text-main);
+      font-family: 'Inter', 'Pretendard', sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* --- Auth Screen --- */
+    .auth-container { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; }
+    .auth-form { display: flex; gap: 10px; margin-top: 2rem; }
+    .auth-input { background: var(--bg-light); border: 1px solid var(--border-color); color: var(--text-main); padding: 12px 15px; border-radius: 8px; font-size: 1rem; }
+    .auth-button { background: var(--gradient); border: none; color: white; padding: 12px 25px; border-radius: 8px; font-size: 1rem; cursor: pointer; }
+    .auth-error { color: var(--secondary); margin-top: 1rem; }
+
+    /* --- Main Layout --- */
+    .app-container { display: grid; grid-template-columns: 320px 1fr; height: 100vh; }
+    .sidebar { background-color: var(--bg-light); padding: 1.5rem; border-right: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 2rem; }
+    .main-content { overflow-y: auto; }
+    
+    .brand { font-size: 1.8rem; font-weight: 700; text-align: center; }
+    .brand-main { color: var(--secondary); }
+    .brand-x { color: var(--text-muted); margin: 0 4px; }
+    .brand-sub { color: #5372f0; }
+
+    .email-list h3 { margin: 0 0 1rem; font-size: 1rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; }
+    .replied-list { margin-top: 2rem; }
+    
+    /* --- Email List Item --- */
+    .email-item { padding: 1rem; border-radius: 8px; cursor: pointer; border-left: 3px solid transparent; position: relative; }
+    .email-item:hover { background-color: var(--primary); }
+    .email-item.active { background-color: var(--primary); border-left-color: var(--secondary); }
+    .email-item-from { font-weight: 600; font-size: 0.95rem; color: var(--text-main); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .email-item-subject { font-size: 0.9rem; color: var(--text-muted); margin: 4px 0; font-weight: 500;}
+    .email-item-snippet { font-size: 0.85rem; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;}
+    .unread-dot { position: absolute; top: 1rem; right: 1rem; width: 8px; height: 8px; background-color: var(--secondary); border-radius: 50%; }
+
+    /* --- Email Detail --- */
+    .detail-container { padding: 2rem 3rem; }
+    .detail-container.placeholder { display: flex; align-items: center; justify-content: center; height: 100%; color: var(--text-muted); }
+    .detail-header h2 { margin: 0 0 0.5rem; font-size: 1.5rem; }
+    .detail-header p { margin: 0; color: var(--text-muted); }
+    
+    .message-history { margin-top: 2rem; border-top: 1px solid var(--border-color); padding-top: 2rem; }
+    .message-bubble { background-color: var(--bg-light); padding: 1rem 1.5rem; border-radius: 12px; margin-bottom: 1rem; }
+    .message-from { font-weight: bold; margin-bottom: 0.5rem; color: var(--secondary); }
+    .message-bubble p { margin: 0; line-height: 1.6; white-space: pre-wrap; }
+
+    .responses-section { margin-top: 2rem; border-top: 1px solid var(--border-color); padding-top: 2rem; }
+    .responses-section h3 { margin: 0 0 1.5rem; }
+
+    /* --- Response Card --- */
+    .response-card { background-color: var(--bg-light); border-radius: 10px; margin-bottom: 1.5rem; }
+    .response-textarea { width: 100%; height: 150px; background: transparent; border: none; padding: 1.5rem; color: var(--text-main); font-size: 1rem; line-height: 1.6; resize: vertical; border-bottom: 1px solid var(--border-color); }
+    .send-btn { display: block; width: fit-content; margin: 1rem 1.5rem 1.5rem auto; background: var(--gradient); border: none; color: white; padding: 10px 20px; border-radius: 8px; font-weight: 500; cursor: pointer; }
+    
+    .error-text { color: var(--secondary); }
+
+    /* --- Responsive --- */
+    @media (max-width: 768px) {
+      .app-container { grid-template-columns: 1fr; }
+      .sidebar { border-right: none; border-bottom: 1px solid var(--border-color); height: auto; padding: 1rem; }
+      .main-content { overflow-y: visible; }
+      .detail-container { padding: 1.5rem; }
+      .brand { font-size: 1.5rem; }
+    }
+  `}</style>
+);
 
 export default App;
