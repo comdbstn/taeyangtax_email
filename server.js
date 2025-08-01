@@ -61,7 +61,7 @@ app.post('/api/generate', async (req, res) => {
     if (!process.env.GEMINI_API_KEY) throw new Error('Gemini API 키가 설정되지 않았습니다.');
     const { email, examples } = req.body;
     const prompt = `당신은 미국 세무사입니다. 아래 고객 질문에 대해 가능한 자연스럽고 정중한 답변을 3가지 스타일로 작성해주세요.\n\n질문:\n"${email.body}"\n\n이전에 이런 질문에 다음과 같이 답변했습니다:\n1. ${examples?.[0] || ''}\n2. ${examples?.[1] || ''}\n3. ${examples?.[2] || ''}\n\n응답 1:\n응답 2:\n응답 3:`;
-    const geminiRes = await axios.post(`https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent?key=${process.env.GEMINI_API_KEY}`, { contents: [{ role: 'user', parts: [{ text: prompt }] }] }, { headers: { 'Content-Type': 'application/json' } });
+    const geminiRes = await axios.post(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro-latest:generateContent?key=${process.env.GEMINI_API_KEY}`, { contents: [{ role: 'user', parts: [{ text: prompt }] }] }, { headers: { 'Content-Type': 'application/json' } });
     const text = geminiRes.data.candidates?.[0]?.content?.parts?.[0]?.text || '';
     const responses = text.split(/응답 \d:/).map(s => s.trim()).filter(Boolean);
     res.json({ responses });
