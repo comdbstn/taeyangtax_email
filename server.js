@@ -222,6 +222,7 @@ async function fetchAndCacheEmails() {
 }
 
 // --- API Routes ---
+app.get('/api/signature', (req, res) => res.json({ signature: SIGNATURE }));
 app.get('/api/threads', (req, res) => res.json(emailCache));
 app.get('/api/attachments', (req, res) => {
     fs.readdir(path.join(__dirname, 'public/attachments'), (err, files) => {
@@ -243,9 +244,17 @@ app.post('/api/send', async (req, res) => {
     const { threadId, messageId, response, attachments = [] } = req.body;
     const gmail = getGmailClient();
     const originalMsg = await gmail.users.messages.get({ userId: 'me', id: messageId, format: 'metadata', metadataHeaders: ['From', 'Subject', 'Message-ID'] });
-    const from = originalMsg.payload.headers.find(h => h.name === 'From')?.value;
-    const subject = originalMsg.payload.headers.find(h => h.name === 'Subject')?.value;
-    const originalMessageId = originalMsg.payload.headers.find(h => h.name === 'Message-ID')?.value;
+
+    const payload = originalMsg.data.payload;
+    if (!payload || !payload.headers) {
+      console.error('Failed to get original message payload for messageId:', messageId);
+      return res.status(404).json({ error: 'Original message payload not found.' });
+    }
+
+    const from = payload.headers.find(h => h.name === 'From')?.value;
+    const subject = payload.headers.find(h => h.name === 'Subject')?.value;
+    const originalMessageId = payload.headers.find(h => h.name === 'Message-ID')?.value;
+    
     const mailOptions = {
         to: from, subject: `Re: ${subject}`,
         html: `${response.replace(/\n/g, '<br/>')}${SIGNATURE}`,
@@ -255,10 +264,17 @@ app.post('/api/send', async (req, res) => {
     const mailComposer = nodemailer.createTransport({}).mail.compile(mailOptions);
     const rawMessage = await mailComposer.build();
     const encodedMessage = Buffer.from(rawMessage).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    
     await gmail.users.messages.send({ userId: 'me', requestBody: { raw: encodedMessage, threadId } });
     await gmail.users.threads.modify({ userId: 'me', id: threadId, requestBody: { removeLabelIds: ['UNREAD'] } });
-    emailCache.unreplied = emailCache.unreplied.filter(t => t.threadId !== threadId);
-    fetchAndCacheEmails();
+
+    const sentThreadIndex = emailCache.unreplied.findIndex(t => t.threadId === threadId);
+    if (sentThreadIndex > -1) {
+        const [sentThread] = emailCache.unreplied.splice(sentThreadIndex, 1);
+        sentThread.replied = true;
+        emailCache.replied.unshift(sentThread);
+    }
+    
     res.json({ success: true });
   } catch (e) {
     console.error('Error sending email:', e);

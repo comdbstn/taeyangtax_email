@@ -88,7 +88,7 @@ const AttachmentManager = ({ attachments, onClose, onUploadSuccess, onDeleteSucc
     );
 };
 
-const EmailDetail = ({ email, attachments, onSendSuccess, showToast }) => {
+const EmailDetail = ({ email, attachments, onSendSuccess, showToast, signature }) => {
   const [responses, setResponses] = useState([]);
   const [isSending, setIsSending] = useState(false);
   const [selectedAttachments, setSelectedAttachments] = useState({});
@@ -108,7 +108,7 @@ const EmailDetail = ({ email, attachments, onSendSuccess, showToast }) => {
     if (!email || isSending) return;
     setIsSending(true);
     try {
-      await fetch('/api/send', {
+      const res = await fetch('/api/send', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           threadId: email.threadId, messageId: email.messageId,
@@ -116,6 +116,7 @@ const EmailDetail = ({ email, attachments, onSendSuccess, showToast }) => {
           attachments: Object.keys(selectedAttachments).filter(key => selectedAttachments[key])
         })
       });
+      if (!res.ok) throw new Error('Server returned an error');
       showToast('Response sent successfully!');
       onSendSuccess(email.threadId);
     } catch (err) { showToast('Failed to send response.'); } 
@@ -159,7 +160,7 @@ const EmailDetail = ({ email, attachments, onSendSuccess, showToast }) => {
       </div>
        <div className="signature-preview-section">
             <h3>Signature Preview</h3>
-            <div className="signature-box"><img src="/logo.png" alt="Taeyang Tax Service Logo" style={{width: '150px'}}/></div>
+            <div className="signature-box" dangerouslySetInnerHTML={{ __html: signature }} />
        </div>
     </div>
   );
@@ -173,6 +174,7 @@ function App() {
   const [unreplied, setUnreplied] = useState([]);
   const [replied, setReplied] = useState([]);
   const [attachments, setAttachments] = useState([]);
+  const [signature, setSignature] = useState('');
   const [activeThreadId, setActiveThreadId] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -182,7 +184,13 @@ function App() {
 
   const showToast = (message) => setToast({ show: true, message });
 
-  useEffect(() => { if (isAuthenticated) { fetchThreads(); fetchAttachments(); } }, [isAuthenticated]);
+  useEffect(() => {
+    if (isAuthenticated) {
+      fetchThreads();
+      fetchAttachments();
+      fetchSignature();
+    }
+  }, [isAuthenticated]);
 
   const fetchThreads = async () => {
     setLoading(true); setError('');
@@ -205,6 +213,14 @@ function App() {
     } catch(err) { showToast('Could not load attachments.'); }
   }
 
+  const fetchSignature = async () => {
+    try {
+        const res = await fetch('/api/signature');
+        const data = await res.json();
+        setSignature(data.signature);
+    } catch(err) { showToast('Could not load signature.'); }
+  }
+
   const handlePasswordSubmit = (e) => {
     e.preventDefault();
     if (password === 'Taeyangtax1!!!') setIsAuthenticated(true);
@@ -212,16 +228,23 @@ function App() {
   };
   
   const handleSendSuccess = (sentThreadId) => {
-    const sentEmail = unreplied.find(t => t.threadId === sentThreadId);
-    if (sentEmail) {
+    setUnreplied(prevUnreplied => {
+      const newUnreplied = prevUnreplied.filter(t => t.threadId !== sentThreadId);
+      const sentEmail = unreplied.find(t => t.threadId === sentThreadId);
+
+      if (sentEmail) {
         sentEmail.replied = true;
-        const newUnreplied = unreplied.filter(t => t.threadId !== sentThreadId);
-        setUnreplied(newUnreplied);
-        setReplied([sentEmail, ...replied]);
-        if(newUnreplied.length > 0) setActiveThreadId(newUnreplied[0].threadId);
-        else if (replied.length > 0) setActiveThreadId(replied[0].threadId);
-        else setActiveThreadId(null);
-    }
+        setReplied(prevReplied => [sentEmail, ...prevReplied]);
+      }
+
+      if (newUnreplied.length > 0) {
+        setActiveThreadId(newUnreplied[0].threadId);
+      } else {
+        setActiveThreadId(sentEmail ? sentEmail.threadId : null);
+      }
+      
+      return newUnreplied;
+    });
   };
   
   const filteredUnreplied = useMemo(() => unreplied.filter(e => e.subject.toLowerCase().includes(searchTerm.toLowerCase()) || e.from.toLowerCase().includes(searchTerm.toLowerCase())), [unreplied, searchTerm]);
@@ -229,7 +252,7 @@ function App() {
   const activeEmail = unreplied.find(t => t.threadId === activeThreadId) || replied.find(t => t.threadId === activeThreadId);
 
   if (!isAuthenticated) return <PasswordScreen onSubmit={handlePasswordSubmit} password={password} setPassword={setPassword} error={authError} />;
-  
+
   return (
     <>
       <div className="app-container">
@@ -237,7 +260,7 @@ function App() {
           <div className="sidebar-header">
              <header className="brand"><span className="brand-main">taeyang</span><span className="brand-x">X</span><span className="brand-sub">iMate</span></header>
              <div className="search-bar"><input type="text" placeholder="Search..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} /></div>
-          </div>
+            </div>
           <div className="sidebar-scroll-area">
             <nav className="email-list">
                <h3>Unreplied ({filteredUnreplied.length})</h3>
@@ -249,11 +272,11 @@ function App() {
               <summary><h3>Replied ({filteredReplied.length})</h3></summary>
               <nav className="email-list replied-list">{filteredReplied.map(email => (<EmailListItem key={email.threadId} email={email} active={email.threadId === activeThreadId} onClick={() => setActiveThreadId(email.threadId)}/>))}</nav>
             </details>
-          </div>
+        </div>
           <div className="sidebar-footer"><button className="manage-attachments-btn" onClick={() => setAttachmentManagerOpen(true)}>Manage Files</button></div>
         </aside>
-        <main className="main-content"><EmailDetail email={activeEmail} attachments={attachments} onSendSuccess={handleSendSuccess} showToast={showToast} /></main>
-      </div>
+        <main className="main-content"><EmailDetail email={activeEmail} attachments={attachments} onSendSuccess={handleSendSuccess} showToast={showToast} signature={signature} /></main>
+    </div>
       {isAttachmentManagerOpen && <AttachmentManager attachments={attachments} onClose={() => setAttachmentManagerOpen(false)} onUploadSuccess={fetchAttachments} onDeleteSuccess={fetchAttachments} showToast={showToast} />}
       <Toast message={toast.message} show={toast.show} onDismiss={() => setToast({ ...toast, show: false })} />
       <GlobalStyles />
