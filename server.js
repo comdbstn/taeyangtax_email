@@ -101,6 +101,15 @@ function parseEmailBody(payload) {
 
     let text = body;
     if (mimeType === 'text/html') {
+        // Process hyperlinks first
+        text = text.replace(/<a[^>]*href="([^"]*)"[^>]*>(.*?)<\/a>/gi, (match, href, text) => {
+            // Remove mailto: links and javascript links as they are not useful
+            if (href.startsWith('mailto:') || href.startsWith('javascript:')) {
+                return text;
+            }
+            return `${text} (${href})`;
+        });
+
         text = text
             .replace(/<!--[\s\S]*?-->/g, '')
             .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
@@ -109,7 +118,7 @@ function parseEmailBody(payload) {
             .replace(/<(p|div|h[1-6]|tr)[^>]*>/gi, '\n')
             .replace(/<td[^>]*>/gi, '  ')
             .replace(/<li[^>]*>/gi, '\n* ')
-            .replace(/<[^>]+>/g, '')
+            .replace(/<[^>]+>/g, '') // strip remaining tags
             .replace(/&nbsp;/g, ' ')
             .replace(/&amp;/g, '&')
             .replace(/&lt;/g, '<')
