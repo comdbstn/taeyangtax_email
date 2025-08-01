@@ -73,21 +73,71 @@ function cleanEmailBody(text) {
 
     let cleaned = text;
 
-    // Remove quoted text comprehensively
-    cleaned = cleaned.replace(/^(> ?)+/gm, ''); // Standard quote characters
-    cleaned = cleaned.replace(/On .*wrote:\n/g, ''); // Common email client quote headers
-    cleaned = cleaned.replace(/From: .*\nSent: .*\nTo: .*\nSubject: .*/g, ''); // Forwarded/replied email headers
-
-    // Remove signature lines (more aggressive)
-    cleaned = cleaned.replace(/(--|__|––|—)\s*\n(.*\n){1,5}/g, '');
-    cleaned = cleaned.replace(/(Thanks,?|Best,?|Regards,?|Sincerely,?|Thank you,?)\s*\n.*/gi, '');
-
-    // Normalize whitespace
-    cleaned = cleaned.replace(/\s*\n\s*/g, '\n'); // Collapse multiple newlines and trim whitespace around them
-    cleaned = cleaned.replace(/\n{3,}/g, '\n\n'); // Allow at most one blank line
+    // 1. Cut off the email thread at the first sign of a reply/forward header.
+    const quoteHeaders = [
+        /From: .*/i,
+        /Sent: .*/i,
+        /To: .*/i,
+        /Subject: .*/i,
+        /On .*wrote:/i, // English "On [date], [person] wrote:"
+        /(\d{4}년 \d{1,2}월 \d{1,2}일|오전|오후) \d{1,2}:\d{2}, .*님이 작성:/, // Korean Gmail "YYYY년 M월 D일 (요일) 오전/오후 H:MM, [person]님이 작성:"
+    ];
     
-    // Trim final output
-    return cleaned.trim();
+    let earliestCutIndex = -1;
+
+    for (const header of quoteHeaders) {
+        const match = cleaned.match(header);
+        if (match) {
+            const index = match.index;
+            if (earliestCutIndex === -1 || index < earliestCutIndex) {
+                earliestCutIndex = index;
+            }
+        }
+    }
+
+    if (earliestCutIndex !== -1) {
+        cleaned = cleaned.substring(0, earliestCutIndex);
+    }
+    
+    // 2. Remove standard signature cues, but more carefully.
+    // This looks for "Best Regards," etc., followed by a newline, and removes everything after.
+    const signatureCues = [
+        'Best Regards',
+        'Sincerely',
+        'Thank you',
+        'Thanks',
+        'Regards',
+        '감사합니다',
+        '안녕히 계세요'
+    ];
+
+    let earliestSignatureIndex = -1;
+
+    for (const cue of signatureCues) {
+        // Match the cue only if it's followed by a comma or newline, to avoid matching it mid-sentence.
+        const regex = new RegExp(`^${cue},?\\s*$`, 'mi');
+        const match = cleaned.match(regex);
+        if (match) {
+            const index = match.index;
+             if (earliestSignatureIndex === -1 || index < earliestSignatureIndex) {
+                earliestSignatureIndex = index;
+            }
+        }
+    }
+    
+    if (earliestSignatureIndex !== -1) {
+         cleaned = cleaned.substring(0, earliestSignatureIndex);
+    }
+
+
+    // 3. Remove any remaining quoted lines (lines starting with '>')
+    cleaned = cleaned.replace(/^(> ?)+/gm, '');
+
+    // 4. Final cleanup of whitespace.
+    cleaned = cleaned.replace(/\s*\n\s*/g, '\n').trim(); // Collapse newlines and trim surrounding whitespace.
+    cleaned = cleaned.replace(/\n{3,}/g, '\n\n'); // Condense multiple blank lines.
+
+    return cleaned;
 }
 
 
