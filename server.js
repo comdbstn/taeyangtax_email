@@ -68,37 +68,67 @@ function getGmailClient() {
   return google.gmail({ version: 'v1', auth: oAuth2Client });
 }
 
+function cleanEmailBody(text) {
+    if (!text) return '';
+
+    let cleaned = text;
+
+    // Remove quoted text comprehensively
+    cleaned = cleaned.replace(/^(> ?)+/gm, ''); // Standard quote characters
+    cleaned = cleaned.replace(/On .*wrote:\n/g, ''); // Common email client quote headers
+    cleaned = cleaned.replace(/From: .*\nSent: .*\nTo: .*\nSubject: .*/g, ''); // Forwarded/replied email headers
+
+    // Remove signature lines (more aggressive)
+    cleaned = cleaned.replace(/(--|__|––|—)\s*\n(.*\n){1,5}/g, '');
+    cleaned = cleaned.replace(/(Thanks,?|Best,?|Regards,?|Sincerely,?|Thank you,?)\s*\n.*/gi, '');
+
+    // Normalize whitespace
+    cleaned = cleaned.replace(/\s*\n\s*/g, '\n'); // Collapse multiple newlines and trim whitespace around them
+    cleaned = cleaned.replace(/\n{3,}/g, '\n\n'); // Allow at most one blank line
+    
+    // Trim final output
+    return cleaned.trim();
+}
+
+
 // --- REVISED AND ROBUST parseEmailBody function ---
 function parseEmailBody(payload) {
     if (!payload) return '';
+    let body = '';
 
-    const findTextPart = (partsArr) => {
-        let body = '';
-        if (!Array.isArray(partsArr)) return body;
-
+    const findPart = (partsArr, mimeType) => {
+        if (!Array.isArray(partsArr)) return null;
         for (const part of partsArr) {
-            if (part.mimeType === 'text/plain' && part.body && part.body.data) {
-                body = Buffer.from(part.body.data, 'base64').toString('utf-8');
-                return body;
+            if (part.mimeType === mimeType && part.body && part.body.data) {
+                return part.body.data;
             }
             if (part.parts) {
-                const nestedBody = findTextPart(part.parts);
-                if (nestedBody) return nestedBody;
+                const nestedResult = findPart(part.parts, mimeType);
+                if (nestedResult) return nestedResult;
             }
         }
-        return body;
+        return null;
     };
+    
+    // Prefer HTML body for better structure, fallback to plain text
+    let bodyData = findPart(payload.parts, 'text/html') || findPart(payload.parts, 'text/plain');
 
-    if (payload.parts && Array.isArray(payload.parts)) {
-        const body = findTextPart(payload.parts);
-        if (body) return body;
-    }
-
-    if (payload.body && payload.body.data) {
-        return Buffer.from(payload.body.data, 'base64').toString('utf-8');
+    if (!bodyData && payload.body && payload.body.data) {
+        bodyData = payload.body.data;
     }
     
-    return '';
+    if (bodyData) {
+        body = Buffer.from(bodyData, 'base64').toString('utf-8');
+        // If it's HTML, strip tags for a clean text version
+        if (payload.mimeType === 'text/html' || (findPart(payload.parts, 'text/html') && !findPart(payload.parts, 'text/plain'))) {
+            body = body.replace(/<style[^>]*>.*<\/style>/gs, '')
+                       .replace(/<script[^>]*>.*<\/script>/gs, '')
+                       .replace(/<[^>]+>/g, ' ')
+                       .replace(/&nbsp;/g, ' ');
+        }
+    }
+    
+    return cleanEmailBody(body);
 }
 
 
@@ -192,37 +222,67 @@ async function fetchAndCacheEmails() {
         if (!listRes.data.threads || listRes.data.threads.length === 0) {
             emailCache.unreplied = [];
             console.log('No unread threads found.');
+            isCacheUpdating = false;
             return;
         }
 
-        const newUnreplied = [];
-        for (const threadHeader of listRes.data.threads) {
-            const existingThread = emailCache.unreplied.find(t => t.threadId === threadHeader.id);
-            if (existingThread && existingThread.aiResponses.length > 0) {
-                newUnreplied.push(existingThread);
-                continue;
+        const threadProcessingPromises = listRes.data.threads.map(async (threadHeader) => {
+            try {
+                const existingThread = emailCache.unreplied.find(t => t.threadId === threadHeader.id);
+                if (existingThread && existingThread.aiResponses && existingThread.aiResponses.length > 0) {
+                    return existingThread; // Return existing thread to keep it in the cache
+                }
+
+                const threadRes = await gmail.users.threads.get({ userId: 'me', id: threadHeader.id, format: 'full' });
+                const messages = threadRes.data.messages || [];
+
+                if (messages.length === 0 || messages.some(m => m.labelIds && m.labelIds.includes('SENT'))) {
+                    return null; // Skip sent threads or empty threads
+                }
+                
+                const conversationHistory = messages.map(msg => {
+                    const from = msg.payload.headers.find(h => h.name === 'From')?.value || 'Unknown';
+                    const body = parseEmailBody(msg.payload);
+                    return `From: ${from}\n\n${body}`;
+                }).join('\n\n--- Next Message ---\n\n');
+
+                const lastMessage = messages[messages.length - 1];
+                
+                return {
+                    threadId: threadHeader.id,
+                    messageId: lastMessage.id,
+                    from: lastMessage.payload.headers.find(h => h.name === 'From')?.value || '',
+                    subject: lastMessage.payload.headers.find(h => h.name === 'Subject')?.value || '',
+                    snippet: lastMessage.snippet,
+                    historyId: lastMessage.historyId,
+                    messages: messages.map(m => ({ 
+                        id: m.id, 
+                        from: m.payload.headers.find(h => h.name === 'From')?.value || 'Unknown', 
+                        body: parseEmailBody(m.payload) 
+                    })).filter(m => m.body),
+                    aiResponses: await generateAiResponses(conversationHistory, lastMessage.payload.headers.find(h => h.name === 'Subject')?.value || ''),
+                    replied: false,
+                };
+            } catch (error) {
+                console.error(`Failed to process thread ${threadHeader.id}:`, error);
+                return null; // Return null if processing fails for this specific thread
             }
+        });
 
-            const threadRes = await gmail.users.threads.get({ userId: 'me', id: threadHeader.id, format: 'full' });
-            const messages = threadRes.data.messages || [];
-            if (messages.length === 0 || messages.some(m => m.labelIds && m.labelIds.includes('SENT'))) continue;
+        const results = await Promise.allSettled(threadProcessingPromises);
+        
+        const newUnreplied = results
+            .filter(result => result.status === 'fulfilled' && result.value)
+            .map(result => result.value);
 
-            // Pass the entire payload to the robust parser
-            const conversationHistory = messages.map(msg => `From: ${msg.payload.headers.find(h => h.name === 'From')?.value || 'Unknown'}\n\n${parseEmailBody(msg.payload)}`).join('\n\n--- Next Message ---\n\n');
-            const lastMessage = messages[messages.length - 1];
-            const threadData = {
-                threadId: threadHeader.id, messageId: lastMessage.id,
-                from: lastMessage.payload.headers.find(h => h.name === 'From')?.value || '',
-                subject: lastMessage.payload.headers.find(h => h.name === 'Subject')?.value || '',
-                snippet: lastMessage.snippet, historyId: lastMessage.historyId,
-                messages: messages.map(m => ({ id: m.id, from: m.payload.headers.find(h => h.name === 'From')?.value || '', body: parseEmailBody(m.payload) })),
-                aiResponses: await generateAiResponses(conversationHistory, lastMessage.payload.headers.find(h => h.name === 'Subject')?.value || ''), replied: false,
-            };
-            newUnreplied.push(threadData);
-        }
         emailCache.unreplied = newUnreplied;
-        console.log(`Cache updated: ${emailCache.unreplied.length} unreplied threads.`);
-    } catch (e) { console.error('Error during cache update:', e); } finally { isCacheUpdating = false; }
+        console.log(`Cache updated: ${emailCache.unreplied.length} unreplied threads processed.`);
+
+    } catch (e) {
+        console.error('Error during email fetching loop:', e);
+    } finally {
+        isCacheUpdating = false;
+    }
 }
 
 // --- API Routes ---
