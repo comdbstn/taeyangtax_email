@@ -181,6 +181,8 @@ function App() {
   const [searchTerm, setSearchTerm] = useState('');
   const [toast, setToast] = useState({ show: false, message: '' });
   const [isAttachmentManagerOpen, setAttachmentManagerOpen] = useState(false);
+  const [showAllReplied, setShowAllReplied] = useState(false);
+
 
   const showToast = (message) => setToast({ show: true, message });
 
@@ -251,6 +253,8 @@ function App() {
   const filteredReplied = useMemo(() => replied.filter(e => e.subject.toLowerCase().includes(searchTerm.toLowerCase()) || e.from.toLowerCase().includes(searchTerm.toLowerCase())), [replied, searchTerm]);
   const activeEmail = unreplied.find(t => t.threadId === activeThreadId) || replied.find(t => t.threadId === activeThreadId);
 
+  const displayedReplied = showAllReplied ? filteredReplied : filteredReplied.slice(0, 5);
+
   if (!isAuthenticated) return <PasswordScreen onSubmit={handlePasswordSubmit} password={password} setPassword={setPassword} error={authError} />;
 
   return (
@@ -268,9 +272,14 @@ function App() {
                {error && <p className="error-text">{error}</p>}
                {!loading && filteredUnreplied.length === 0 && <p className="empty-list-text">No unreplied emails.</p>}
             </nav>
-            <details className="replied-accordion">
+            <details className="replied-accordion" open>
               <summary><h3>Replied ({filteredReplied.length})</h3></summary>
-              <nav className="email-list replied-list">{filteredReplied.map(email => (<EmailListItem key={email.threadId} email={email} active={email.threadId === activeThreadId} onClick={() => setActiveThreadId(email.threadId)}/>))}</nav>
+              <nav className="email-list replied-list">
+                {displayedReplied.map(email => (<EmailListItem key={email.threadId} email={email} active={email.threadId === activeThreadId} onClick={() => setActiveThreadId(email.threadId)}/>))}
+              </nav>
+              {filteredReplied.length > 5 && !showAllReplied && (
+                <button className="show-more-btn" onClick={() => setShowAllReplied(true)}>Show More</button>
+              )}
             </details>
         </div>
           <div className="sidebar-footer"><button className="manage-attachments-btn" onClick={() => setAttachmentManagerOpen(true)}>Manage Files</button></div>
@@ -306,7 +315,7 @@ const GlobalStyles = () => (
     .brand-x { color: var(--text-muted); margin: 0 4px; }
     .brand-sub { color: #5372f0; }
     .email-list h3 { margin: 0 0 1rem; font-size: 1rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; padding-top: 1rem; }
-    .replied-accordion summary { cursor: pointer; }
+    .replied-accordion summary { cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
     .empty-list-text { color: var(--text-muted); font-style: italic; text-align: center; font-size: 0.9rem; padding: 1rem 0; }
     .email-item { padding: 1rem; border-radius: 8px; cursor: pointer; border-left: 3px solid transparent; position: relative; }
     .email-item:hover { background-color: var(--primary); }
@@ -340,6 +349,8 @@ const GlobalStyles = () => (
     .sidebar-footer { padding: 1rem 1.5rem; border-top: 1px solid var(--border-color); }
     .manage-attachments-btn { width: 100%; padding: 12px; background-color: var(--primary); border: 1px solid var(--border-color); color: var(--text-main); border-radius: 8px; cursor: pointer; text-align: center; font-weight: 500; }
     .manage-attachments-btn:hover { background-color: #0f3460; }
+    .show-more-btn { background: none; border: 1px solid var(--border-color); color: var(--text-muted); display: block; width: calc(100% - 2rem); margin: 1rem auto 0; padding: 8px; border-radius: 6px; cursor: pointer; text-align: center; }
+    .show-more-btn:hover { background-color: var(--primary); color: var(--text-main); }
     .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; z-index: 1000; }
     .modal-content { background-color: var(--bg-light); padding: 2rem; border-radius: 12px; width: 90%; max-width: 500px; border: 1px solid var(--border-color); }
     .modal-content h2 { margin-top: 0; }

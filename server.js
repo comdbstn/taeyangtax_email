@@ -22,22 +22,14 @@ try {
 
 const SIGNATURE = `
 <br/><br/>
---
-<br/>
-<p style="font-size: 12px; color: #888;">
+<div style="color: #333; font-family: sans-serif; font-size: 12px;">
   <strong>TAEYANG TAX SERVICE</strong><br/>
   780 Roosevelt, #209, Irvine, CA 92620<br/>
   <strong>Office</strong>: 949 546 7979 / <strong>Fax</strong>: 949 296 4030<br/>
   <strong>카카오톡 ID</strong>: taeyangtax<br/>
-  <strong>Email</strong>: info@taeyangtax.com<br/>
-  ${logoBase64 ? `<img src="data:image/png;base64,${logoBase64}" alt="Taeyang Tax Service Logo" style="width: 150px; margin-top: 10px;"/>` : ''}
-</p>
-<p style="font-size: 11px; color: #aaa;">
-  Payroll / Sales Tax / QuickBooks<br/>
-  개인 및 비지니스 절세 및 세금보고<br/>
-  FATCA, FBAR 해외금융자산신고<br/>
-  회사설립, 미국 진출 자문 & 컨설팅
-</p>
+  <strong>Email</strong>: info@taeyangtax.com<br/><br/>
+  ${logoBase64 ? `<img src="data:image/png;base64,${logoBase64}" alt="Taeyang Tax Service Logo" style="width: 150px;"/>` : ''}
+</div>
 `;
 
 // --- Multer Setup for File Uploads ---
