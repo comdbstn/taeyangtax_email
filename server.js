@@ -9,6 +9,17 @@ require('dotenv').config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// --- Load Email Samples for RAG ---
+let emailSamples = [];
+try {
+  const samplesData = fs.readFileSync(path.join(__dirname, 'email_samples.json'), 'utf-8');
+  emailSamples = JSON.parse(samplesData);
+  console.log(`Successfully loaded ${emailSamples.length} email samples.`);
+} catch (error) {
+  console.error('Could not read or parse email_samples.json. Proceeding without samples.', error);
+}
+
+
 app.use(cors());
 app.use(express.json());
 
@@ -41,22 +52,55 @@ function parseEmailBody(parts) {
   return findTextPart(parts);
 }
 
+// Simple text similarity function (for RAG)
+function getSimilarSamples(question) {
+    if (emailSamples.length === 0) return [];
+    // A more sophisticated similarity search (e.g., using vector embeddings) would be ideal for a larger dataset.
+    // For now, we use a simple keyword matching approach.
+    const questionWords = new Set(question.toLowerCase().split(/\s+/));
+    const scoredSamples = emailSamples.map(sample => {
+        const sampleWords = new Set(sample.question.toLowerCase().split(/\s+/));
+        const intersection = new Set([...questionWords].filter(x => sampleWords.has(x)));
+        return { ...sample, score: intersection.size };
+    });
+    return scoredSamples.sort((a, b) => b.score - a.score).slice(0, 2);
+}
+
+
 async function generateAiResponses(body) {
   if (!process.env.GEMINI_API_KEY) throw new Error('Gemini API key is not set.');
   if (!body) return [];
   
   try {
-    const prompt = `You are a US tax accountant. Please write three natural and polite responses in Korean to the customer's question below.\n\nQuestion:\n"${body}"\n\nResponse 1:\nResponse 2:\nResponse 3:`;
+    const similarSamples = getSimilarSamples(body);
+    let ragContext = "There are no specific past examples to reference.";
+    if(similarSamples.length > 0) {
+        ragContext = "Please refer to the following successful past response examples to compose your new answer. Emulate the tone and style closely:\n\n" +
+        similarSamples.map(s => `Example Question: "${s.question}"\nExample Answer: "${s.answer}"`).join("\n\n---\n\n");
+    }
+
+    const prompt = `You are a professional and courteous US tax accountant named iMate, an AI assistant for Taeyang Tax. Your task is to draft three distinct, polite, and natural-sounding responses in Korean to the customer's question below.
+
+**Context from past successful responses:**
+${ragContext}
+
+**New Customer Question:**
+"${body}"
+
+Based on the provided context and the new question, generate three complete and ready-to-send responses.
+Response 1 (Friendly and direct style):
+Response 2 (Formal and detailed style):
+Response 3 (Concise and reassuring style):`;
+
     const geminiRes = await axios.post(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro-latest:generateContent?key=${process.env.GEMINI_API_KEY}`,
       { contents: [{ role: 'user', parts: [{ text: prompt }] }] },
       { headers: { 'Content-Type': 'application/json' } }
     );
     const text = geminiRes.data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-    return text.split(/응답 \d:/).map(s => s.trim()).filter(Boolean);
+    return text.split(/Response \d+\s\(.+\):/).map(s => s.trim()).filter(Boolean);
   } catch(e) {
     console.error('Gemini API Error:', e.response ? e.response.data.error : e.message);
-    // Return empty array on failure so the app can still display the email
     return ["AI 응답 생성에 실패했습니다.", "API 키 또는 모델 설정을 확인하세요.", "서버 로그를 확인해주세요."];
   }
 }
@@ -83,7 +127,6 @@ app.get('/api/threads', async (req, res) => {
       const messageId = headers.find(h => h.name === 'Message-ID')?.value || '';
       const body = parseEmailBody(lastMessage.payload.parts || [lastMessage.payload]);
 
-      // Check if we have replied to this thread already
       const hasSentMail = messages.some(m => m.labelIds.includes('SENT'));
 
       const threadData = {
@@ -99,19 +142,19 @@ app.get('/api/threads', async (req, res) => {
             body: parseEmailBody(m.payload.parts || [m.payload])
         })),
         aiResponses: [],
+        replied: hasSentMail
       };
 
       if (!hasSentMail && body) {
           threadData.aiResponses = await generateAiResponses(body);
       }
       
-      return { data: threadData, replied: hasSentMail };
+      return threadData;
     });
 
     const results = await Promise.all(threadPromises);
-
-    const unreplied = results.filter(r => !r.replied).map(r => r.data);
-    const replied = results.filter(r => r.replied).map(r => r.data);
+    const unreplied = results.filter(r => !r.replied);
+    const replied = results.filter(r => r.replied);
 
     res.json({ unreplied, replied });
 
@@ -146,7 +189,6 @@ app.post('/api/send', async (req, res) => {
       requestBody: { raw, threadId }
     });
     
-    // Mark the message/thread as read
     await gmail.users.threads.modify({
         userId: 'me',
         id: threadId,
