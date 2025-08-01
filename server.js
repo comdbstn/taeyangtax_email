@@ -68,131 +68,100 @@ function getGmailClient() {
   return google.gmail({ version: 'v1', auth: oAuth2Client });
 }
 
-function cleanEmailBody(text) {
-    if (!text) return '';
-
-    // 1. Find the split point. This is the start of the quoted reply.
-    const splitters = [
-        '\nOn',      // Covers "On ... wrote:"
-        '-----Original Message-----',
-        '----- Original Message -----',
-        'From:',
-        'Sent:',
-        'To:',
-        'Subject:',
-        '님이 작성:', // Korean quote header
-    ];
-
-    let earliestSplitPoint = -1;
-    let textToSearch = text;
-
-    // To avoid cutting off the actual message, we only consider splits in the lower 75% of the email.
-    const searchStartIndex = Math.floor(text.length * 0.25);
-    textToSearch = text.substring(searchStartIndex);
-
-
-    for (const splitter of splitters) {
-        const point = textToSearch.indexOf(splitter);
-        if (point !== -1) {
-            const absolutePoint = point + searchStartIndex;
-            if (earliestSplitPoint === -1 || absolutePoint < earliestSplitPoint) {
-                earliestSplitPoint = absolutePoint;
-            }
-        }
-    }
-
-    let cleaned = text;
-    if (earliestSplitPoint !== -1) {
-        cleaned = text.substring(0, earliestSplitPoint);
-    }
-    
-    // 2. Remove any leftover quoted lines from the new message part
-    cleaned = cleaned.replace(/^(> ?)+.*$/gm, '');
-
-    // 3. Remove signatures if they appear at the very end of the new message
-    const signatureCues = [
-        'best regards', 'sincerely', 'thank you', 'thanks', 'regards', '감사합니다', '안녕히 계세요',
-    ];
-    const lines = cleaned.trim().split('\n');
-    let lastContentLineIndex = -1;
-    for (let i = lines.length - 1; i >= 0; i--) {
-        if (lines[i].trim() !== '') {
-            lastContentLineIndex = i;
-            break;
-        }
-    }
-
-    if (lastContentLineIndex > 0) {
-        // Check last few lines of content for a signature cue
-        for (let i = 0; i < 4 && lastContentLineIndex - i >= 0; i++) {
-            const currentLine = lines[lastContentLineIndex - i];
-            if (signatureCues.some(cue => currentLine.toLowerCase().startsWith(cue))) {
-                // If a cue is found, check if it's preceded by a blank line, a strong indicator of a signature.
-                if (lastContentLineIndex - i > 0 && lines[lastContentLineIndex - i - 1].trim() === '') {
-                    cleaned = lines.slice(0, lastContentLineIndex - i).join('\n');
-                    break;
-                }
-            }
-        }
-    }
-
-    return cleaned.trim();
-}
-
-
 function parseEmailBody(payload) {
     if (!payload) return '';
-    let body = '';
-    let mimeType = payload.mimeType;
 
     // 1. Find the best content part (prefer HTML)
-    let partToParse = null;
+    let body = '';
+    let mimeType = payload.mimeType || 'text/plain';
 
-    function findBestPart(parts) {
-        if (!parts) return null;
-        // Prefer HTML over plain text in a multipart/alternative
-        if (parts.mimeType === 'multipart/alternative' && parts.parts) {
-            return parts.parts.find(p => p.mimeType === 'text/html') || parts.parts.find(p => p.mimeType === 'text/plain');
+    function findBestPart(p) {
+        if (!p) return null;
+        // In a multipart/alternative, HTML is preferred over plain text.
+        if (p.mimeType === 'multipart/alternative' && p.parts) {
+            const htmlPart = p.parts.find(sub => sub.mimeType === 'text/html');
+            if (htmlPart) return htmlPart;
+            const plainPart = p.parts.find(sub => sub.mimeType === 'text/plain');
+            if (plainPart) return plainPart;
         }
-        // Recurse into multipart/related or multipart/mixed
-        if ((parts.mimeType.startsWith('multipart/')) && parts.parts) {
-            for (const part of parts.parts) {
-                const found = findBestPart(part);
-                if (found) return found;
+
+        // Recurse into other multipart types
+        if (p.mimeType.startsWith('multipart/') && p.parts) {
+            for (const subPart of p.parts) {
+                const found = findBestPart(subPart);
+                if (found) return found; // Return the first text/html or text/plain part found
             }
         }
-        // Base case: find text/html or text/plain
-        if (parts.mimeType === 'text/html' || parts.mimeType === 'text/plain') {
-            return parts;
+
+        // Base case: the part itself is what we want
+        if ((p.mimeType === 'text/html' || p.mimeType === 'text/plain') && p.body && p.body.data) {
+            return p;
         }
         return null;
     }
     
-    partToParse = findBestPart(payload) || payload;
-
-
+    const partToParse = findBestPart(payload) || payload;
     if (partToParse && partToParse.body && partToParse.body.data) {
         body = Buffer.from(partToParse.body.data, 'base64').toString('utf-8');
         mimeType = partToParse.mimeType;
+    } else {
+        return ''; // No parsable content found
     }
 
-    // 2. If it's HTML, strip it down to text
+    // 2. If it's HTML, convert it to a clean text representation
+    let text = body;
     if (mimeType === 'text/html') {
-        body = body
+        text = text
             .replace(/<!--[\s\S]*?-->/g, '') // MS Office comments
             .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
             .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
             .replace(/<br\s*\/?>/gi, '\n')
-            .replace(/<p[^>]*>/gi, '\n')
-            .replace(/<[^>]+>/g, '') // Strip all other tags
+            .replace(/<(p|div|h[1-6]|tr|li)[^>]*>/gi, '\n')
+            .replace(/<[^>]+>/g, ' ')
             .replace(/&nbsp;/g, ' ')
             .replace(/&amp;/g, '&')
             .replace(/&lt;/g, '<')
             .replace(/&gt;/g, '>');
     }
 
-    // 3. Clean up conversational artifacts
-    return cleanEmailBody(body);
+    // 3. Remove quoted history from the text
+    const lines = text.split('\n');
+    const resultLines = [];
+    const quoteMarkers = [
+        '>', 'On ', 'wrote:', '-----Original Message-----', '----- Original Message -----', 'From:', 'Sent:', 'To:', 'Subject:', '님이 작성:',
+    ];
+
+    let cutOff = false;
+    for (const line of lines) {
+        // Only trigger cutoff if the line looks like a header, not just a quote
+        if (!cutOff && quoteMarkers.some(marker => line.trim().startsWith(marker) && line.includes(':'))) {
+            cutOff = true;
+        } else if (!cutOff && line.trim().startsWith('>')) {
+             cutOff = true;
+        }
+
+        if (!cutOff) {
+            resultLines.push(line);
+        }
+    }
+
+    // 4. Final cleanup
+    let cleanedText = resultLines.join('\n')
+        .replace(/\n\s*\n+/g, '\n\n') // Collapse multiple newlines
+        .trim();
+    
+    // 5. More careful signature removal
+    const signatureCues = ['best regards', 'sincerely', 'thank you', 'thanks', 'regards', '감사합니다'];
+    const textBlocks = cleanedText.split('\n\n');
+    if (textBlocks.length > 1) {
+        const lastBlock = textBlocks[textBlocks.length - 1];
+        if (signatureCues.some(cue => lastBlock.toLowerCase().includes(cue)) && lastBlock.length < 150) {
+            textBlocks.pop();
+            cleanedText = textBlocks.join('\n\n').trim();
+        }
+    }
+
+    return cleanedText;
 }
 
 
