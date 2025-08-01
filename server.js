@@ -144,38 +144,71 @@ function cleanEmailBody(text) {
 // --- REVISED AND ROBUST parseEmailBody function ---
 function parseEmailBody(payload) {
     if (!payload) return '';
+    
     let body = '';
+    let mimeType = '';
 
-    const findPart = (partsArr, mimeType) => {
-        if (!Array.isArray(partsArr)) return null;
-        for (const part of partsArr) {
-            if (part.mimeType === mimeType && part.body && part.body.data) {
-                return part.body.data;
-            }
-            if (part.parts) {
-                const nestedResult = findPart(part.parts, mimeType);
-                if (nestedResult) return nestedResult;
+    // Recursive function to find the most relevant part
+    const findPart = (partsArr) => {
+        let plainText = null;
+        let htmlText = null;
+
+        if (Array.isArray(partsArr)) {
+            for (const part of partsArr) {
+                if (part.mimeType === 'text/plain' && !plainText) {
+                    if (part.body && part.body.data) {
+                        plainText = Buffer.from(part.body.data, 'base64').toString('utf-8');
+                    }
+                } else if (part.mimeType === 'text/html' && !htmlText) {
+                     if (part.body && part.body.data) {
+                        htmlText = Buffer.from(part.body.data, 'base64').toString('utf-8');
+                    }
+                }
+
+                if (part.parts) {
+                    const nested = findPart(part.parts);
+                    plainText = plainText || nested.plainText;
+                    htmlText = htmlText || nested.htmlText;
+                }
             }
         }
-        return null;
+        return { plainText, htmlText };
     };
-    
-    // Prefer HTML body for better structure, fallback to plain text
-    let bodyData = findPart(payload.parts, 'text/html') || findPart(payload.parts, 'text/plain');
 
-    if (!bodyData && payload.body && payload.body.data) {
-        bodyData = payload.body.data;
+    const parts = findPart(payload.parts);
+    const htmlBody = parts.htmlText;
+    const plainBody = parts.plainText;
+
+    if (htmlBody) {
+        body = htmlBody;
+        mimeType = 'text/html';
+    } else if (plainBody) {
+        body = plainBody;
+        mimeType = 'text/plain';
+    } else if (payload.body && payload.body.data) {
+        // Fallback for simple, non-multipart messages
+        body = Buffer.from(payload.body.data, 'base64').toString('utf-8');
+        mimeType = payload.mimeType;
     }
-    
-    if (bodyData) {
-        body = Buffer.from(bodyData, 'base64').toString('utf-8');
-        // If it's HTML, strip tags for a clean text version
-        if (payload.mimeType === 'text/html' || (findPart(payload.parts, 'text/html') && !findPart(payload.parts, 'text/plain'))) {
-            body = body.replace(/<style[^>]*>.*<\/style>/gs, '')
-                       .replace(/<script[^>]*>.*<\/script>/gs, '')
-                       .replace(/<[^>]+>/g, ' ')
-                       .replace(/&nbsp;/g, ' ');
+
+    if (mimeType === 'text/html') {
+        // Aggressively strip down HTML
+        // Remove MS Office conditional comments first
+        body = body.replace(/<!--[\s\S]*?-->/g, '');
+        // Extract content from body tag if it exists, otherwise use the whole string
+        const bodyMatch = body.match(/<body[^>]*>([\s\S]*)<\/body>/i);
+        if (bodyMatch && bodyMatch[1]) {
+            body = bodyMatch[1];
         }
+        // Remove style and script tags
+        body = body.replace(/<style[^>]*>.*<\/style>/gs, '');
+        body = body.replace(/<script[^>]*>.*<\/script>/gs, '');
+        // Convert block elements to newlines
+        body = body.replace(/<(div|p|h[1-6]|li|br)[^>]*>/gi, '\n');
+        // Strip remaining HTML tags
+        body = body.replace(/<[^>]+>/g, ' ');
+        // Decode HTML entities
+        body = body.replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
     }
     
     return cleanEmailBody(body);
