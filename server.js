@@ -77,47 +77,41 @@ function parseEmailBody(payload) {
 
     function findBestPart(p) {
         if (!p) return null;
-        // In a multipart/alternative, HTML is preferred over plain text.
         if (p.mimeType === 'multipart/alternative' && p.parts) {
-            const htmlPart = p.parts.find(sub => sub.mimeType === 'text/html');
-            if (htmlPart) return htmlPart;
-            const plainPart = p.parts.find(sub => sub.mimeType === 'text/plain');
-            if (plainPart) return plainPart;
+            return p.parts.find(sub => sub.mimeType === 'text/html') || p.parts.find(sub => sub.mimeType === 'text/plain');
         }
-
-        // Recurse into other multipart types
         if (p.mimeType.startsWith('multipart/') && p.parts) {
             for (const subPart of p.parts) {
                 const found = findBestPart(subPart);
-                if (found) return found; // Return the first text/html or text/plain part found
+                if (found) return found;
             }
         }
-
-        // Base case: the part itself is what we want
         if ((p.mimeType === 'text/html' || p.mimeType === 'text/plain') && p.body && p.body.data) {
             return p;
         }
         return null;
     }
-    
+
     const partToParse = findBestPart(payload) || payload;
     if (partToParse && partToParse.body && partToParse.body.data) {
         body = Buffer.from(partToParse.body.data, 'base64').toString('utf-8');
         mimeType = partToParse.mimeType;
     } else {
-        return ''; // No parsable content found
+        return '';
     }
 
     // 2. If it's HTML, convert it to a clean text representation
     let text = body;
     if (mimeType === 'text/html') {
         text = text
-            .replace(/<!--[\s\S]*?-->/g, '') // MS Office comments
+            .replace(/<!--[\s\S]*?-->/g, '')
             .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
             .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
             .replace(/<br\s*\/?>/gi, '\n')
-            .replace(/<(p|div|h[1-6]|tr|li)[^>]*>/gi, '\n')
-            .replace(/<[^>]+>/g, ' ')
+            .replace(/<(p|div|h[1-6]|tr)[^>]*>/gi, '\n')
+            .replace(/<td[^>]*>/gi, '  ')
+            .replace(/<li[^>]*>/gi, '\n* ')
+            .replace(/<[^>]+>/g, '')
             .replace(/&nbsp;/g, ' ')
             .replace(/&amp;/g, '&')
             .replace(/&lt;/g, '<')
@@ -128,18 +122,15 @@ function parseEmailBody(payload) {
     const lines = text.split('\n');
     const resultLines = [];
     const quoteMarkers = [
-        '>', 'On ', 'wrote:', '-----Original Message-----', '----- Original Message -----', 'From:', 'Sent:', 'To:', 'Subject:', '님이 작성:',
+        'On', 'wrote:', '-----Original Message-----', '----- Original Message -----', 'From:', 'Sent:', 'To:', 'Subject:', '님이 작성:',
     ];
-
+    
     let cutOff = false;
     for (const line of lines) {
-        // Only trigger cutoff if the line looks like a header, not just a quote
-        if (!cutOff && quoteMarkers.some(marker => line.trim().startsWith(marker) && line.includes(':'))) {
+        const trimmedLine = line.trim();
+        if (!cutOff && (trimmedLine.startsWith('>') || quoteMarkers.some(marker => trimmedLine.startsWith(marker)))) {
             cutOff = true;
-        } else if (!cutOff && line.trim().startsWith('>')) {
-             cutOff = true;
         }
-
         if (!cutOff) {
             resultLines.push(line);
         }
@@ -147,15 +138,14 @@ function parseEmailBody(payload) {
 
     // 4. Final cleanup
     let cleanedText = resultLines.join('\n')
-        .replace(/\n\s*\n+/g, '\n\n') // Collapse multiple newlines
+        .replace(/\n\s*\n+/g, '\n\n')
         .trim();
-    
-    // 5. More careful signature removal
+        
     const signatureCues = ['best regards', 'sincerely', 'thank you', 'thanks', 'regards', '감사합니다'];
     const textBlocks = cleanedText.split('\n\n');
     if (textBlocks.length > 1) {
-        const lastBlock = textBlocks[textBlocks.length - 1];
-        if (signatureCues.some(cue => lastBlock.toLowerCase().includes(cue)) && lastBlock.length < 150) {
+        const lastBlock = textBlocks[textBlocks.length - 1].trim();
+        if (signatureCues.some(cue => lastBlock.toLowerCase().startsWith(cue)) && lastBlock.length < 200) {
             textBlocks.pop();
             cleanedText = textBlocks.join('\n\n').trim();
         }
@@ -198,7 +188,7 @@ Each response must be a JSON object with three keys: "type", "subject", and "bod
 **Directives:**
 1.  **Complexity Assessment:**
     - If the query is complex or a new client inquiry, generate a **single JSON object** for a paid consultation. The "type" must be "유료 상담 제안". The body must be this exact text:
-      "안녕하세요.\\n세무회계태양 입니다.\\n\\n보내주신 이메일 확인했습니다.\\n죄송하지만 말씀드릴 내용이 많습니다.\\n그리고 이번에 부터 보고하셔야 할 2024년 세금보고는 작년과 달리 매우 복잡하게 됩니다.\\n질문주신 하나하나가 모두 설명 드릴 것이 많아서요.\\n\\n괜찮으시다면 유료 상담으로 진행을 하시면 어떨까 여쭙고자 합니다.\\n비용은 100불이며, Zelle로 받습니다.\\nZelle : taxtaeyang@gmail.com ( Taeyang Tax Service)\\n비용 납부해주시고 MA에 계신것으로 알아서 통화시간 맞춰서 통화를 하면 좋겠습니다.\\n\\n바뀌시는것이 너무 많고 중요한것들이기에 상담을 추천드려요. 꼭 필요한"
+      "안녕하세요.\\n세무회계태양 입니다.\\n\\n보내주신 이메일 확인했습니다.\\n죄송하지만 말씀드릴 내용이 많습니다.\\n그리고 이번에 부터 보고하셔야 할 2024년 세금보고는 작년과 달리 매우 복잡하게 됩니다.\\n질문주신 하나하나가 모두 설명 드릴 것이 많아서요.\\n\\n괜찮으시다면 유료 상담으로 진행을 하시면 어떨까 여쭙고자 합니다.\\n비용은 100불이며, Zelle로 받습니다.\\nZelle : taxtaeyang@gmail.com ( Taeyang Tax Service)\\n비용 납부해주시고 MA에 계신것으로 알아서 통화를 하면 좋겠습니다.\\n\\n바뀌시는것이 너무 많고 중요한것들이기에 상담을 추천드려요. 꼭 필요한"
     - If the query is simple, proceed to the next directive.
 
 2.  **Three Response Options (for simple queries):**
