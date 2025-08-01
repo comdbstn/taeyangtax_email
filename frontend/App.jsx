@@ -22,8 +22,7 @@ const SIGNATURE = `
 `;
 
 
-// --- Components ---
-
+// --- Components (PasswordScreen, EmailListItem, ResponseCard are unchanged) ---
 const Toast = ({ message, show, onDismiss }) => {
   useEffect(() => {
     if (show) {
@@ -82,6 +81,7 @@ const ResponseCard = ({ response, onUpdate, onSend, isSending }) => {
     </div>
   );
 };
+
 
 const AttachmentManager = ({ attachments, onClose, onUploadSuccess, onDeleteSuccess, showToast }) => {
     const [isUploading, setIsUploading] = useState(false);
@@ -503,7 +503,7 @@ const GlobalStyles = () => (
     
     .error-text { color: var(--secondary); }
 
-    .toast { position: fixed; bottom: 20px; right: 20px; background-color: #333; color: white; padding: 15px 25px; border-radius: 8px; transform: translateY(120%); transition: transform 0.3s ease-in-out; }
+    .toast { position: fixed; bottom: 80px; right: 20px; background-color: #333; color: white; padding: 15px 25px; border-radius: 8px; transform: translateY(120%); transition: transform 0.3s ease-in-out; z-index: 2000; }
     .toast.show { transform: translateY(0); }
     
     .sidebar-header { flex-shrink: 0; }
@@ -527,6 +527,7 @@ const GlobalStyles = () => (
       .sidebar { border-right: none; border-bottom: 1px solid var(--border-color); height: 50vh; }
       .main-content { overflow-y: visible; }
       .detail-container { padding: 1.5rem; }
+      .toast { bottom: 20px; }
     }
   `}</style>
 );
