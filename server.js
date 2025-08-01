@@ -4,10 +4,45 @@ const path = require('path');
 const fs = require('fs');
 const { google } = require('googleapis');
 const axios = require('axios');
+const nodemailer = require('nodemailer');
 require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// --- Serve Public Files ---
+app.use(express.static(path.join(__dirname, 'public')));
+app.use('/attachments', express.static(path.join(__dirname, 'public/attachments')));
+
+
+// --- Constants ---
+const SIGNATURE = `
+<br/><br/>
+--
+<br/>
+<p style="font-size: 12px; color: #888;">
+  <strong>TAEYANG TAX SERVICE</strong><br/>
+  780 Roosevelt, #209, Irvine, CA 92620<br/>
+  <strong>Office</strong>: 949 546 7979 / <strong>Fax</strong>: 949 296 4030<br/>
+  <strong>카카오톡 ID</strong>: taeyangtax<br/>
+  <strong>Email</strong>: info@taeyangtax.com<br/>
+  <img src="cid:logo" alt="Taeyang Tax Service Logo" style="width: 150px; margin-top: 10px;"/>
+</p>
+<p style="font-size: 11px; color: #aaa;">
+  Payroll / Sales Tax / QuickBooks<br/>
+  개인 및 비지니스 절세 및 세금보고<br/>
+  FATCA, FBAR 해외금융자산신고<br/>
+  회사설립, 미국 진출 자문 & 컨설팅
+</p>
+`;
+
+
+// --- Cache ---
+let emailCache = {
+  unreplied: [],
+  replied: [],
+};
+let isCacheUpdating = false;
 
 // --- Load Email Samples for RAG ---
 let emailSamples = [];
@@ -19,12 +54,10 @@ try {
   console.error('Could not read or parse email_samples.json. Proceeding without samples.', error);
 }
 
-
 app.use(cors());
 app.use(express.json());
 
-// --- Helper Functions ---
-
+// --- Helper Functions (omitted for brevity, they are the same) ---
 function getGmailClient() {
   if (!process.env.GMAIL_CLIENT_ID || !process.env.GMAIL_CLIENT_SECRET || !process.env.GMAIL_REFRESH_TOKEN) {
     throw new Error('Gmail API environment variables are not set.');
@@ -35,28 +68,37 @@ function getGmailClient() {
 }
 
 function parseEmailBody(parts) {
-  if (!parts) return '';
-  const findTextPart = (arr) => {
+    if (!parts) return '';
     let body = '';
-    for (const part of arr) {
-      if (part.mimeType === 'text/plain' && part.body.data) {
-        return Buffer.from(part.body.data, 'base64').toString('utf-8');
-      }
-      if (part.parts) {
-        body = findTextPart(part.parts);
-        if (body) return body;
-      }
+    const findTextPart = (arr) => {
+        for (const part of arr) {
+            if (part.mimeType === 'text/plain' && part.body.data) {
+                return Buffer.from(part.body.data, 'base64').toString('utf-8');
+            }
+            if (part.parts) {
+                const nestedBody = findTextPart(part.parts);
+                if (nestedBody) return nestedBody;
+            }
+        }
+        return null;
+    };
+
+    let textBody = findTextPart(parts);
+
+    if (textBody) {
+        return textBody;
     }
+
+    const nonMultipart = parts[0];
+    if (nonMultipart && nonMultipart.body && nonMultipart.body.data) {
+        return Buffer.from(nonMultipart.body.data, 'base64').toString('utf-8');
+    }
+
     return '';
-  };
-  return findTextPart(parts);
 }
 
-// Simple text similarity function (for RAG)
 function getSimilarSamples(question) {
     if (emailSamples.length === 0) return [];
-    // A more sophisticated similarity search (e.g., using vector embeddings) would be ideal for a larger dataset.
-    // For now, we use a simple keyword matching approach.
     const questionWords = new Set(question.toLowerCase().split(/\s+/));
     const scoredSamples = emailSamples.map(sample => {
         const sampleWords = new Set(sample.question.toLowerCase().split(/\s+/));
@@ -65,7 +107,6 @@ function getSimilarSamples(question) {
     });
     return scoredSamples.sort((a, b) => b.score - a.score).slice(0, 2);
 }
-
 
 async function generateAiResponses(body) {
   if (!process.env.GEMINI_API_KEY) throw new Error('Gemini API key is not set.');
@@ -105,68 +146,98 @@ Response 3 (Concise and reassuring style):`;
   }
 }
 
+async function fetchAndCacheEmails() {
+    if (isCacheUpdating) {
+        console.log('Cache update already in progress. Skipping.');
+        return;
+    }
+    isCacheUpdating = true;
+    console.log('Starting background email cache update...');
+
+    try {
+        const gmail = getGmailClient();
+        const listRes = await gmail.users.threads.list({ userId: 'me', labelIds: ['INBOX'], q: 'is:unread', maxResults: 10 });
+
+        if (!listRes.data.threads || listRes.data.threads.length === 0) {
+            console.log('No unread threads found. Clearing unreplied cache.');
+            emailCache.unreplied = [];
+            isCacheUpdating = false;
+            return;
+        }
+
+        const newUnreplied = [];
+        for (const threadHeader of listRes.data.threads) {
+            const existingThread = emailCache.unreplied.find(t => t.threadId === threadHeader.id);
+            if (existingThread && existingThread.aiResponses && existingThread.aiResponses.length > 0) {
+                newUnreplied.push(existingThread);
+                continue;
+            }
+
+            const threadRes = await gmail.users.threads.get({ userId: 'me', id: threadHeader.id, format: 'full' });
+            const messages = threadRes.data.messages || [];
+            const lastMessage = messages[messages.length - 1];
+            const headers = lastMessage.payload.headers;
+            
+            const from = headers.find(h => h.name === 'From')?.value || '';
+            const subject = headers.find(h => h.name === 'Subject')?.value || '';
+            const body = parseEmailBody(lastMessage.payload.parts || [lastMessage.payload]);
+            const hasSentMail = messages.some(m => m.labelIds.includes('SENT'));
+
+             if (hasSentMail) continue;
+
+            const threadData = {
+                threadId: threadHeader.id,
+                messageId: lastMessage.id,
+                from,
+                subject,
+                snippet: lastMessage.snippet,
+                historyId: lastMessage.historyId,
+                messages: messages.map(m => ({
+                    id: m.id,
+                    from: m.payload.headers.find(h => h.name === 'From')?.value || '',
+                    body: parseEmailBody(m.payload.parts || [m.payload])
+                })),
+                aiResponses: [],
+                replied: false,
+            };
+
+            if (body) {
+                threadData.aiResponses = await generateAiResponses(body);
+            }
+            newUnreplied.push(threadData);
+        }
+
+        emailCache.unreplied = newUnreplied;
+        console.log(`Cache updated successfully. ${emailCache.unreplied.length} unreplied threads cached.`);
+
+    } catch (e) {
+        console.error('Error during background cache update:', e);
+    } finally {
+        isCacheUpdating = false;
+    }
+}
+
+
 // --- API Routes ---
 
-app.get('/api/threads', async (req, res) => {
-  try {
-    const gmail = getGmailClient();
-    const listRes = await gmail.users.threads.list({ userId: 'me', labelIds: ['INBOX'], q: 'is:unread', maxResults: 10 });
-    
-    if (!listRes.data.threads || listRes.data.threads.length === 0) {
-      return res.json({ unreplied: [], replied: [] });
-    }
+app.get('/api/threads', (req, res) => {
+  res.json(emailCache);
+});
 
-    const threadPromises = listRes.data.threads.map(async (threadHeader) => {
-      const threadRes = await gmail.users.threads.get({ userId: 'me', id: threadHeader.id, format: 'full' });
-      const messages = threadRes.data.messages || [];
-      const lastMessage = messages[messages.length - 1];
-      const headers = lastMessage.payload.headers;
-      
-      const from = headers.find(h => h.name === 'From')?.value || '';
-      const subject = headers.find(h => h.name === 'Subject')?.value || '';
-      const messageId = headers.find(h => h.name === 'Message-ID')?.value || '';
-      const body = parseEmailBody(lastMessage.payload.parts || [lastMessage.payload]);
-
-      const hasSentMail = messages.some(m => m.labelIds.includes('SENT'));
-
-      const threadData = {
-        threadId: threadHeader.id,
-        messageId: lastMessage.id,
-        from,
-        subject,
-        snippet: lastMessage.snippet,
-        historyId: lastMessage.historyId,
-        messages: messages.map(m => ({
-            id: m.id,
-            from: m.payload.headers.find(h => h.name === 'From')?.value || '',
-            body: parseEmailBody(m.payload.parts || [m.payload])
-        })),
-        aiResponses: [],
-        replied: hasSentMail
-      };
-
-      if (!hasSentMail && body) {
-          threadData.aiResponses = await generateAiResponses(body);
-      }
-      
-      return threadData;
+app.get('/api/attachments', (req, res) => {
+    const directoryPath = path.join(__dirname, 'public/attachments');
+    fs.readdir(directoryPath, (err, files) => {
+        if (err) {
+            console.error("Could not list the directory.", err);
+            return res.status(500).send('Unable to scan attachments directory.');
+        }
+        res.json(files.filter(file => file !== '.gitkeep')); // Filter out placeholder files
     });
-
-    const results = await Promise.all(threadPromises);
-    const unreplied = results.filter(r => !r.replied);
-    const replied = results.filter(r => r.replied);
-
-    res.json({ unreplied, replied });
-
-  } catch (e) {
-    console.error('Error fetching threads:', e);
-    res.status(500).json({ error: 'Failed to fetch email threads', detail: e.message });
-  }
 });
 
 app.post('/api/send', async (req, res) => {
   try {
-    const { threadId, messageId, response } = req.body;
+    const { threadId, messageId, response, attachments = [] } = req.body;
     const gmail = getGmailClient();
     
     const originalMsg = await gmail.users.messages.get({ userId: 'me', id: messageId, format: 'metadata', metadataHeaders: ['From', 'Subject', 'Message-ID'] });
@@ -175,31 +246,48 @@ app.post('/api/send', async (req, res) => {
     const subject = originalMsg.data.payload.headers.find(h => h.name === 'Subject')?.value;
     const originalMessageId = originalMsg.data.payload.headers.find(h => h.name === 'Message-ID')?.value;
 
-    const raw = Buffer.from(
-      `To: ${from}\r\n` +
-      `Subject: Re: ${subject}\r\n` +
-      `In-Reply-To: ${originalMessageId}\r\n` +
-      `References: ${originalMessageId}\r\n` +
-      `Content-Type: text/plain; charset=utf-8\r\n\r\n` +
-      response
-    ).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    const mailOptions = {
+        to: from,
+        subject: `Re: ${subject}`,
+        html: `${response.replace(/\n/g, '<br/>')}${SIGNATURE}`,
+        inReplyTo: originalMessageId,
+        references: originalMessageId,
+        attachments: attachments.map(fileName => ({
+            filename: fileName,
+            path: path.join(__dirname, 'public/attachments', fileName)
+        }))
+    };
+    
+    // Add logo as an embedded image
+    mailOptions.attachments.push({
+        filename: 'logo.png',
+        path: path.join(__dirname, 'public', 'logo.png'),
+        cid: 'logo' // same cid value as in the html img src
+    });
+
+    const mailComposer = nodemailer.createTransport({}).mail.compile(mailOptions);
+    const rawMessage = await mailComposer.build();
+
+    const encodedMessage = Buffer.from(rawMessage).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
     await gmail.users.messages.send({
       userId: 'me',
-      requestBody: { raw, threadId }
+      requestBody: { raw: encodedMessage, threadId }
     });
     
     await gmail.users.threads.modify({
         userId: 'me',
         id: threadId,
-        requestBody: {
-            removeLabelIds: ['UNREAD']
-        }
-    })
+        requestBody: { removeLabelIds: ['UNREAD'] }
+    });
+
+    emailCache.unreplied = emailCache.unreplied.filter(t => t.threadId !== threadId);
+    fetchAndCacheEmails();
 
     res.json({ success: true });
   } catch (e) {
-    console.error('Error sending email:', e.message);
+    console.error('Error sending email:', e);
+    console.error('Detailed error:', e.message, e.stack);
     res.status(500).json({ error: 'Failed to send email', detail: e.message });
   }
 });
@@ -220,4 +308,6 @@ app.get('*', (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
+  fetchAndCacheEmails(); 
+  setInterval(fetchAndCacheEmails, 60 * 1000); 
 });

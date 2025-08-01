@@ -1,5 +1,27 @@
 import React, { useEffect, useState, useMemo } from 'react';
 
+// --- Constants ---
+const SIGNATURE = `
+<br/><br/>
+--
+<br/>
+<p style="font-size: 12px; color: #888;">
+  <strong>TAEYANG TAX SERVICE</strong><br/>
+  780 Roosevelt, #209, Irvine, CA 92620<br/>
+  <strong>Office</strong>: 949 546 7979 / <strong>Fax</strong>: 949 296 4030<br/>
+  <strong>카카오톡 ID</strong>: taeyangtax<br/>
+  <strong>Email</strong>: info@taeyangtax.com<br/>
+  <img src="/logo.png" alt="Taeyang Tax Service Logo" style="width: 150px; margin-top: 10px;"/>
+</p>
+<p style="font-size: 11px; color: #aaa;">
+  Payroll / Sales Tax / QuickBooks<br/>
+  개인 및 비지니스 절세 및 세금보고<br/>
+  FATCA, FBAR 해외금융자산신고<br/>
+  회사설립, 미국 진출 자문 & 컨설팅
+</p>
+`;
+
+
 // --- Components ---
 
 const Toast = ({ message, show, onDismiss }) => {
@@ -61,15 +83,21 @@ const ResponseCard = ({ response, onUpdate, onSend, isSending }) => {
   );
 };
 
-const EmailDetail = ({ email, onSendSuccess, showToast }) => {
+const EmailDetail = ({ email, attachments, onSendSuccess, showToast }) => {
   const [responses, setResponses] = useState([]);
   const [isSending, setIsSending] = useState(false);
+  const [selectedAttachments, setSelectedAttachments] = useState({});
 
   useEffect(() => {
     if (email) {
       setResponses(email.aiResponses.map(text => ({ text })));
+      setSelectedAttachments({}); // Reset attachments when email changes
     }
   }, [email]);
+
+  const handleAttachmentChange = (fileName) => {
+    setSelectedAttachments(prev => ({ ...prev, [fileName]: !prev[fileName] }));
+  };
 
   const handleResponseUpdate = (index, newText) => {
     const newResponses = [...responses];
@@ -80,14 +108,22 @@ const EmailDetail = ({ email, onSendSuccess, showToast }) => {
   const handleSend = async (index) => {
     if (!email || isSending) return;
     setIsSending(true);
+    
+    const finalAttachments = Object.keys(selectedAttachments).filter(key => selectedAttachments[key]);
+    // Note: The response is plain text for now. Server needs to handle conversion if we want HTML emails.
+    const finalResponse = responses[index].text;
+
+
     try {
       const res = await fetch('/api/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-            threadId: email.threadId, 
-            messageId: email.messageId, 
-            response: responses[index].text 
+        body: JSON.stringify({
+          threadId: email.threadId,
+          messageId: email.messageId,
+          response: finalResponse,
+          attachments: finalAttachments,
+          isHtml: false // Sending as plain text for now
         })
       });
       if (!res.ok) throw new Error(`Server Error: ${res.status}`);
@@ -131,6 +167,32 @@ const EmailDetail = ({ email, onSendSuccess, showToast }) => {
           />
         )) : <p className="error-text">Could not generate AI responses for this email.</p>}
       </div>
+
+      <div className="attachments-section">
+        <h3>Common Attachments</h3>
+        {attachments.length > 0 ? (
+          <div className="attachments-grid">
+            {attachments.map(file => (
+              <div key={file} className="attachment-item">
+                <input
+                  type="checkbox"
+                  id={`att-${file}`}
+                  checked={!!selectedAttachments[file]}
+                  onChange={() => handleAttachmentChange(file)}
+                  disabled={isSending}
+                />
+                <label htmlFor={`att-${file}`}>{file}</label>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="empty-list-text">No common attachments found in public/attachments.</p>
+        )}
+      </div>
+       <div className="signature-preview-section">
+            <h3>Signature Preview</h3>
+            <div className="signature-box" dangerouslySetInnerHTML={{ __html: SIGNATURE.replace(/<br\/>/g, '<br>') }}></div>
+       </div>
     </div>
   );
 };
@@ -144,6 +206,7 @@ function App() {
 
   const [unreplied, setUnreplied] = useState([]);
   const [replied, setReplied] = useState([]);
+  const [attachments, setAttachments] = useState([]);
   const [activeThreadId, setActiveThreadId] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -156,6 +219,7 @@ function App() {
   useEffect(() => {
     if (isAuthenticated) {
       fetchThreads();
+      fetchAttachments();
     }
   }, [isAuthenticated]);
 
@@ -182,6 +246,18 @@ function App() {
       setLoading(false);
     }
   };
+
+  const fetchAttachments = async () => {
+    try {
+        const res = await fetch('/api/attachments');
+        if(!res.ok) throw new Error('Failed to fetch attachments');
+        const data = await res.json();
+        setAttachments(data);
+    } catch(err) {
+        console.error(err);
+        showToast('Could not load attachments.');
+    }
+  }
 
   const handlePasswordSubmit = (e) => {
     e.preventDefault();
@@ -263,7 +339,7 @@ function App() {
           </div>
         </aside>
         <main className="main-content">
-          <EmailDetail email={activeEmail} onSendSuccess={handleSendSuccess} showToast={showToast} />
+          <EmailDetail email={activeEmail} attachments={attachments} onSendSuccess={handleSendSuccess} showToast={showToast} />
         </main>
       </div>
       <Toast message={toast.message} show={toast.show} onDismiss={() => setToast({ ...toast, show: false })} />
@@ -326,8 +402,14 @@ const GlobalStyles = () => (
     .message-from { font-weight: bold; margin-bottom: 0.5rem; color: var(--secondary); }
     .message-bubble p { margin: 0; line-height: 1.6; white-space: pre-wrap; }
 
-    .responses-section { margin-top: 2rem; border-top: 1px solid var(--border-color); padding-top: 2rem; }
-    .responses-section h3 { margin: 0 0 1.5rem; }
+    .responses-section, .attachments-section, .signature-preview-section { margin-top: 2rem; border-top: 1px solid var(--border-color); padding-top: 2rem; }
+    .responses-section h3, .attachments-section h3, .signature-preview-section h3 { margin: 0 0 1.5rem; }
+    
+    .attachments-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 1rem; }
+    .attachment-item { display: flex; align-items: center; gap: 10px; background-color: var(--primary); padding: 10px; border-radius: 6px; }
+    .attachment-item label { cursor: pointer; }
+    
+    .signature-box { border: 1px solid var(--border-color); padding: 1rem; border-radius: 8px; background-color: var(--bg-light); }
 
     .response-card { background-color: var(--bg-light); border: 1px solid var(--border-color); border-radius: 10px; margin-bottom: 1.5rem; overflow: hidden; }
     .response-textarea { width: 100%; height: 200px; background: transparent; border: none; padding: 1.5rem; color: var(--text-main); font-size: 1rem; line-height: 1.6; resize: vertical; }
