@@ -34,6 +34,9 @@ const EmailListItem = ({ email, active, onClick }) => (
 
 const ResponseCard = ({ response, onUpdate, onSend, isSending }) => (
     <div className="response-card">
+      <div className="response-card-header">
+        {response.type && <span className="response-type-tag">{response.type}</span>}
+      </div>
       <input
         type="text"
         className="response-subject-input"
@@ -371,6 +374,8 @@ const GlobalStyles = () => (
     .attachment-item label { cursor: pointer; }
     .signature-box { border: 1px solid var(--border-color); padding: 1rem; border-radius: 8px; background-color: var(--bg-light); }
     .response-card { background-color: var(--bg-light); border: 1px solid var(--border-color); border-radius: 10px; margin-bottom: 1.5rem; overflow: hidden; }
+    .response-card-header { padding: 0.75rem 1.5rem; background-color: rgba(0,0,0,0.2); }
+    .response-type-tag { font-size: 0.8rem; font-weight: 500; background-color: var(--secondary); color: white; padding: 4px 8px; border-radius: 4px; }
     .response-subject-input { width: 100%; background: transparent; border: none; border-bottom: 1px solid var(--border-color); padding: 1.2rem 1.5rem; color: var(--text-main); font-size: 1.1rem; font-weight: 500; }
     .response-textarea { width: 100%; height: 200px; background: transparent; border: none; padding: 1.5rem; color: var(--text-main); font-size: 1rem; line-height: 1.6; resize: vertical; }
     .send-btn { display: block; width: fit-content; margin: 0 1.5rem 1.5rem auto; background: var(--gradient); border: none; color: white; padding: 10px 20px; border-radius: 8px; font-weight: 500; cursor: pointer; }

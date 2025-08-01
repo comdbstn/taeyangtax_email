@@ -22,14 +22,14 @@ try {
 
 const SIGNATURE = `
 <br/><br/>
-<div style="color: #333; font-family: sans-serif; font-size: 12px;">
+<div style="color: #FFFFFF; font-family: sans-serif; font-size: 12px;">
   <strong>TAEYANG TAX SERVICE</strong><br/>
   780 Roosevelt, #209, Irvine, CA 92620<br/>
   <strong>Office</strong>: 949 546 7979 / <strong>Fax</strong>: 949 296 4030<br/>
   <strong>카카오톡 ID</strong>: taeyangtax<br/>
   <strong>Email</strong>: info@taeyangtax.com<br/><br/>
   ${logoBase64 ? `<img src="data:image/png;base64,${logoBase64}" alt="Taeyang Tax Service Logo" style="width: 150px;"/>` : ''}
-  <p style="font-size: 11px; color: #555;">
+  <p style="font-size: 11px; color: #DDDDDD;">
     Payroll / Sales Tax / QuickBooks<br/>
     개인 및 비지니스 절세 및 세금보고<br/>
     FATCA, FBAR 해외금융자산신고<br/>
@@ -127,21 +127,22 @@ async function generateAiResponses(conversationHistory, originalSubject) {
     const prompt = `You are iMate, a professional US tax accountant AI for Taeyang Tax. Analyze the entire email conversation and the original subject ("${originalSubject}"). Your task is to generate three distinct and professional response options in JSON format.
 
 **JSON Structure:**
-Each response must be a JSON object with two keys: "subject" and "body".
+Each response must be a JSON object with three keys: "type", "subject", and "body".
+- "type": A short Korean phrase summarizing the response category. Use one of the following: "직접적인 답변", "대안/추가 정보 제시", "추가 정보 요청", "유료 상담 제안".
 - "subject": A concise and professional email subject in Korean. It should start with "Re: " followed by a summary of the response.
 - "body": The email body in Korean.
 
 **Directives:**
 1.  **Complexity Assessment:**
-    - If the query is too complex, a new client inquiry, or requires in-depth analysis, generate a **single JSON object** for a paid consultation. The body must be this exact text:
+    - If the query is complex or a new client inquiry, generate a **single JSON object** for a paid consultation. The "type" must be "유료 상담 제안". The body must be this exact text:
       "안녕하세요.\\n세무회계태양 입니다.\\n\\n보내주신 이메일 확인했습니다.\\n죄송하지만 말씀드릴 내용이 많습니다.\\n그리고 이번에 부터 보고하셔야 할 2024년 세금보고는 작년과 달리 매우 복잡하게 됩니다.\\n질문주신 하나하나가 모두 설명 드릴 것이 많아서요.\\n\\n괜찮으시다면 유료 상담으로 진행을 하시면 어떨까 여쭙고자 합니다.\\n비용은 100불이며, Zelle로 받습니다.\\nZelle : taxtaeyang@gmail.com ( Taeyang Tax Service)\\n비용 납부해주시고 MA에 계신것으로 알아서 통화시간 맞춰서 통화를 하면 좋겠습니다.\\n\\n바뀌시는것이 너무 많고 중요한것들이기에 상담을 추천드려요. 꼭 필요한"
     - If the query is simple, proceed to the next directive.
 
 2.  **Three Response Options (for simple queries):**
     Generate an array of **three separate JSON objects**. The difference must be in the solution/answer, not just the tone.
-    - **Response 1 (Direct Answer):** The most direct solution.
-    - **Response 2 (Alternative/Broader Perspective):** A different approach or broader context.
-    - **Response 3 (Information Request):** Ask for more information to provide a better solution.
+    - **Response 1 (Direct Answer):** "type" should be "직접적인 답변".
+    - **Response 2 (Alternative/Broader Perspective):** "type" should be "대안/추가 정보 제시".
+    - **Response 3 (Information Request):** "type" should be "추가 정보 요청".
     - **Attachment Hint:** If a document is relevant, mention it in the body (e.g., "관련 서류를 첨부해 드립니다.").
 
 **Reference Styles:**
