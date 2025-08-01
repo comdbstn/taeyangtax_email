@@ -4,7 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const { google } = require('googleapis');
 const axios = require('axios');
-const nodemailer = require('nodemailer');
+const MailComposer = require('nodemailer/lib/mail-composer');
 const multer = require('multer');
 require('dotenv').config();
 
@@ -253,8 +253,8 @@ app.post('/api/send', async (req, res) => {
         inReplyTo: originalMessageId, references: originalMessageId,
         attachments: attachments.map(fileName => ({ filename: fileName, path: path.join(__dirname, 'public/attachments', fileName) }))
     };
-    const mailComposer = nodemailer.createTransport({}).mail.compile(mailOptions);
-    const rawMessage = await mailComposer.build();
+    const mailComposer = new MailComposer(mailOptions);
+    const rawMessage = await mailComposer.compile().build();
     const encodedMessage = Buffer.from(rawMessage).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
     
     await gmail.users.messages.send({ userId: 'me', requestBody: { raw: encodedMessage, threadId } });
