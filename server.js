@@ -61,6 +61,19 @@ try {
 app.use(cors());
 app.use(express.json());
 
+app.post('/api/auth', (req, res) => {
+    const { password } = req.body;
+    if (!password) {
+        return res.status(400).json({ error: 'Password is required.' });
+    }
+    if (password === process.env.ACCESS_PASSWORD) {
+        // In a real app, you'd issue a token (e.g., JWT)
+        res.json({ success: true });
+    } else {
+        res.status(401).json({ success: false, error: 'Incorrect password.' });
+    }
+});
+
 // --- Gmail & AI Helper Functions ---
 
 function getGmailClient() {
@@ -69,17 +82,14 @@ function getGmailClient() {
     return google.gmail({ version: 'v1', auth: oAuth2Client });
 }
 
-function getCleanBody(payload) {
+async function getCleanBody(payload) {
     let body = '';
     
+    // Find the best available content part from the email
     function findBestPart(p) {
         if (!p) return null;
-        if (p.mimeType === 'text/html' && p.body && p.body.data) {
-            return p;
-        }
-        if (p.mimeType === 'text/plain' && p.body && p.body.data) {
-            return p;
-        }
+        if (p.mimeType === 'text/html' && p.body && p.body.data) return p;
+        if (p.mimeType === 'text/plain' && p.body && p.body.data) return p;
         if (p.mimeType === 'multipart/alternative' && p.parts) {
             return findBestPart(p.parts.find(sub => sub.mimeType === 'text/html')) || findBestPart(p.parts.find(sub => sub.mimeType === 'text/plain'));
         }
@@ -93,31 +103,56 @@ function getCleanBody(payload) {
     }
 
     const part = findBestPart(payload);
-    if (part) {
-        body = Buffer.from(part.body.data, 'base64').toString('utf-8');
-        if (part.mimeType === 'text/html') {
-            const turndown = require('turndown');
-            const turndownService = new turndown();
-            body = turndownService.turndown(body);
-        }
-    }
-    
-    // Remove quoted text more reliably
-    const lines = body.split('\n');
-    const resultLines = [];
-    const quoteMarkers = [
-        '>', 'On', 'wrote:', '-----Original Message-----', '----- Original Message -----', 'From:', 'Sent:', 'To:', 'Subject:', '님이 작성:',
-    ];
+    if (!part) return '';
 
-    for (const line of lines) {
-        const trimmedLine = line.trim();
-        // Only skip the line if it's a quote marker, don't stop processing
-        if (!quoteMarkers.some(marker => trimmedLine.startsWith(marker))) {
-            resultLines.push(line);
-        }
+    const rawBody = Buffer.from(part.body.data, 'base64').toString('utf-8');
+
+    // If Gemini API key is not available, use fallback
+    if (!process.env.GEMINI_API_KEY) {
+        console.warn("GEMINI_API_KEY not found. Using basic fallback for body cleaning.");
+        const turndown = require('turndown');
+        const turndownService = new turndown();
+        const textBody = part.mimeType === 'text/html' ? turndownService.turndown(rawBody) : rawBody;
+        return textBody.replace(/\n\s*\n+/g, '\n\n').trim();
     }
 
-    return resultLines.join('\n').replace(/\n\s*\n+/g, '\n\n').trim();
+    // Use Gemini to clean the email body
+    try {
+        const prompt = `You are an AI assistant that cleans email content. Your task is to extract only the core message from the provided email body.
+        - Remove all quoted replies (lines starting with '>').
+        - Remove previous conversation history (e.g., "On [Date], [Name] wrote:").
+        - Remove all signatures, legal disclaimers, and promotional footers.
+        - Preserve the original formatting (line breaks, paragraphs) of the core message.
+        - If the email is very short and seems to be only a signature or disclaimer, return an empty string.
+        - Respond ONLY with the cleaned plain text content. Do not add any commentary.
+        
+        Email Body to Clean:
+        ---
+        ${rawBody}
+        ---`;
+
+        const geminiRes = await axios.post(
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro-latest:generateContent?key=${process.env.GEMINI_API_KEY}`,
+            {
+                contents: [{ role: 'user', parts: [{ text: prompt }] }],
+                generationConfig: {
+                  temperature: 0.0,
+                }
+            },
+            { headers: { 'Content-Type': 'application/json' } }
+        );
+        
+        const cleanedText = geminiRes.data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+        return cleanedText.trim();
+
+    } catch (error) {
+        console.error("Gemini cleaning failed. Falling back to basic cleaning.", error.response ? error.response.data : error.message);
+        // Fallback to simpler cleaning if API fails
+        const turndown = require('turndown');
+        const turndownService = new turndown();
+        const textBody = part.mimeType === 'text/html' ? turndownService.turndown(rawBody) : rawBody;
+        return textBody.replace(/\n\s*\n+/g, '\n\n').trim();
+    }
 }
 
 function getSimilarSamples(question) {
@@ -196,7 +231,63 @@ ${conversationHistory}
   }
 }
 
-// --- Main Email Processing Logic (Rebuilt) ---
+// --- Main Email Processing Logic ---
+
+const parseEmailAddress = (fromHeader) => {
+    if (!fromHeader) return null;
+    const match = fromHeader.match(/<([^>]+)>/);
+    return match ? match[1] : fromHeader.trim();
+};
+
+async function processThread(threadHeader, gmail, myEmailAddress) {
+    try {
+        const threadRes = await gmail.users.threads.get({ userId: 'me', id: threadHeader.id, format: 'full' });
+        const messages = (threadRes.data.messages || []).sort((a, b) => parseInt(a.internalDate) - parseInt(b.internalDate));
+
+        if (messages.length === 0) return null;
+
+        const lastMessage = messages[messages.length - 1];
+        const fromHeader = lastMessage.payload.headers.find(h => h.name === 'From')?.value || '';
+        const senderEmail = parseEmailAddress(fromHeader);
+        const isReplied = messages.some(m => m.payload.headers.find(h => h.name === 'From')?.value.includes(myEmailAddress));
+        
+        const processedMessages = await Promise.all(messages.map(async (msg) => {
+            const from = msg.payload.headers.find(h => h.name === 'From')?.value || 'Unknown';
+            const body = await getCleanBody(msg.payload);
+            return {
+                id: msg.id,
+                from: from,
+                isFromMe: from.includes(myEmailAddress),
+                body: body,
+                date: new Date(parseInt(msg.internalDate)).toISOString(),
+            };
+        }));
+
+        const validMessages = processedMessages.filter(m => m.body);
+        if (validMessages.length === 0) return null;
+
+        let aiResponses = [];
+        if (!isReplied) {
+            const conversationForAI = validMessages.map(msg => `From: ${msg.from}\n\n${msg.body}`).join('\n\n--- Next Message ---\n\n');
+            const subjectHeader = lastMessage.payload.headers.find(h => h.name === 'Subject')?.value || '';
+            aiResponses = await generateAiResponses(conversationForAI, subjectHeader);
+        }
+
+        return {
+            threadId: threadHeader.id,
+            from: fromHeader,
+            senderEmail: senderEmail,
+            subject: lastMessage.payload.headers.find(h => h.name === 'Subject')?.value || '',
+            snippet: lastMessage.snippet,
+            replied: isReplied,
+            messages: validMessages,
+            aiResponses,
+        };
+    } catch (error) {
+        console.error(`Failed to process thread ${threadHeader.id}:`, error);
+        return null;
+    }
+}
 
 async function fetchAndCacheEmails() {
     if (isCacheUpdating) return;
@@ -211,7 +302,7 @@ async function fetchAndCacheEmails() {
         const listRes = await gmail.users.threads.list({
             userId: 'me',
             labelIds: ['INBOX'],
-            q: 'is:unread', // Initially fetch only unread threads for efficiency
+            q: 'is:unread',
             maxResults: 15,
         });
 
@@ -220,7 +311,7 @@ async function fetchAndCacheEmails() {
         const repliedListRes = await gmail.users.threads.list({
             userId: 'me',
             labelIds: ['INBOX'],
-            q: 'is:read in:inbox -in:sent', // Fetch recent replied threads
+            q: 'is:read in:inbox -in:sent',
             maxResults: 15,
         });
         
@@ -230,58 +321,10 @@ async function fetchAndCacheEmails() {
 
         const uniqueThreads = Array.from(new Map(allThreads.map(t => [t.id, t])).values());
 
-        const processedThreads = await Promise.all(uniqueThreads.map(async (threadHeader) => {
-            try {
-                const threadRes = await gmail.users.threads.get({ userId: 'me', id: threadHeader.id, format: 'full' });
-                const messages = (threadRes.data.messages || []).sort((a, b) => parseInt(a.internalDate) - parseInt(b.internalDate));
-
-                if (messages.length === 0) return null;
-
-                const lastMessage = messages[messages.length - 1];
-                const fromHeader = lastMessage.payload.headers.find(h => h.name === 'From')?.value || '';
-                const isReplied = messages.some(m => m.payload.headers.find(h => h.name === 'From')?.value.includes(myEmailAddress));
-                
-                // For unreplied threads, we generate AI responses.
-                // For replied threads, we don't need to, saving API calls.
-                let aiResponses = [];
-                if (!isReplied) {
-                    const conversationForAI = messages.map(msg => {
-                        const from = msg.payload.headers.find(h => h.name === 'From')?.value || 'Unknown';
-                        const body = getCleanBody(msg.payload);
-                        return `From: ${from}\n\n${body}`;
-                    }).join('\n\n--- Next Message ---\n\n');
-                    
-                    const subjectHeader = lastMessage.payload.headers.find(h => h.name === 'Subject')?.value || '';
-                    aiResponses = await generateAiResponses(conversationForAI, subjectHeader);
-                }
-
-                return {
-                    threadId: threadHeader.id,
-                    from: fromHeader,
-                    subject: lastMessage.payload.headers.find(h => h.name === 'Subject')?.value || '',
-                    snippet: lastMessage.snippet,
-                    replied: isReplied,
-                    messages: messages.map(m => {
-                        const from = m.payload.headers.find(h => h.name === 'From')?.value || 'Unknown';
-                        return {
-                            id: m.id,
-                            from: from,
-                            isFromMe: from.includes(myEmailAddress),
-                            body: getCleanBody(m.payload),
-                            date: new Date(parseInt(m.internalDate)).toISOString(),
-                        };
-                    }).filter(m => m.body), // Filter out messages with no clean body
-                    aiResponses,
-                };
-            } catch (error) {
-                console.error(`Failed to process thread ${threadHeader.id}:`, error);
-                return null;
-            }
-        }));
+        const processedThreads = (await Promise.all(uniqueThreads.map(header => processThread(header, gmail, myEmailAddress)))).filter(Boolean);
         
-        const validThreads = processedThreads.filter(Boolean);
-        emailCache.unreplied = validThreads.filter(t => !t.replied);
-        emailCache.replied = validThreads.filter(t => t.replied);
+        emailCache.unreplied = processedThreads.filter(t => !t.replied);
+        emailCache.replied = processedThreads.filter(t => t.replied);
 
         console.log(`Cache updated: ${emailCache.unreplied.length} unreplied, ${emailCache.replied.length} replied.`);
 
@@ -297,6 +340,42 @@ async function fetchAndCacheEmails() {
 app.get('/api/signature', (req, res) => res.json({ signature: SIGNATURE }));
 
 app.get('/api/threads', (req, res) => res.json(emailCache));
+
+app.get('/api/history', async (req, res) => {
+    const { sender, currentThreadId } = req.query;
+    if (!sender) {
+        return res.status(400).json({ error: 'Sender email is required.' });
+    }
+
+    try {
+        const gmail = getGmailClient();
+        const profileRes = await gmail.users.getProfile({ userId: 'me' });
+        const myEmailAddress = profileRes.data.emailAddress;
+
+        const listRes = await gmail.users.threads.list({
+            userId: 'me',
+            q: `from:${sender}`,
+            maxResults: 10, // Fetch up to 10 recent threads for history
+        });
+
+        if (!listRes.data.threads || listRes.data.threads.length === 0) {
+            return res.json([]);
+        }
+
+        // Filter out the current thread from the history list
+        const historyThreadHeaders = listRes.data.threads.filter(t => t.id !== currentThreadId);
+
+        const historyThreads = (await Promise.all(
+            historyThreadHeaders.map(header => processThread(header, gmail, myEmailAddress))
+        )).filter(Boolean); // process and filter out nulls
+
+        res.json(historyThreads);
+
+    } catch (error) {
+        console.error(`Error fetching history for ${sender}:`, error);
+        res.status(500).json({ error: 'Failed to fetch conversation history.' });
+    }
+});
 
 app.post('/api/send', async (req, res) => {
   try {
@@ -357,6 +436,40 @@ app.post('/api/send', async (req, res) => {
   }
 });
 
+app.get('/api/attachments', (req, res) => {
+    const attachmentsDir = path.join(__dirname, 'public/attachments');
+    fs.readdir(attachmentsDir, (err, files) => {
+        if (err) {
+            console.error("Could not list attachments:", err);
+            return res.status(500).json({ error: "Could not list attachments" });
+        }
+        res.json(files.filter(file => file !== '.gitkeep')); // Exclude placeholder
+    });
+});
+
+app.post('/api/upload', upload.single('attachment'), (req, res) => {
+    if (!req.file) {
+        return res.status(400).json({ error: 'No file uploaded.' });
+    }
+    res.json({ success: true, filename: req.file.filename });
+});
+
+app.delete('/api/attachments/:filename', (req, res) => {
+    const filename = req.params.filename;
+    // Basic security check to prevent directory traversal
+    if (filename.includes('..') || path.isAbsolute(filename)) {
+        return res.status(400).json({ error: 'Invalid filename.' });
+    }
+    const filePath = path.join(__dirname, 'public/attachments', filename);
+    fs.unlink(filePath, (err) => {
+        if (err) {
+            console.error(`Failed to delete ${filename}:`, err);
+            return res.status(500).json({ error: `Failed to delete file.`});
+        }
+        res.json({ success: true, message: `${filename} deleted.` });
+    });
+});
+
 
 // --- Server Start & Other Routes ---
 app.use(express.static(path.join(__dirname, 'frontend/dist')));
@@ -364,14 +477,7 @@ app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'frontend/dist/inde
 
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
-  // Add turndown dependency
-  const child_process = require('child_process');
-  try {
-    require.resolve('turndown');
-  } catch(e) {
-    console.log('turndown not found, installing...');
-    child_process.execSync('npm install turndown');
-  }
+
   fetchAndCacheEmails(); 
   setInterval(fetchAndCacheEmails, 90 * 1000); // Increased interval
 });

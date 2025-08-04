@@ -109,11 +109,31 @@ const EmailDetail = ({ email, attachments, onSend, showToast, signature }) => {
   const [responses, setResponses] = useState([]);
   const [isSending, setIsSending] = useState(false);
   const [selectedAttachments, setSelectedAttachments] = useState({});
-  
+  const [conversationHistory, setConversationHistory] = useState([]);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+
   useEffect(() => {
     if (email) {
       setResponses(email.aiResponses || []);
-      setSelectedAttachments({}); 
+      setSelectedAttachments({});
+      
+      // Fetch conversation history
+      if (email.senderEmail) {
+        setIsLoadingHistory(true);
+        fetch(`/api/history?sender=${encodeURIComponent(email.senderEmail)}&currentThreadId=${email.threadId}`)
+          .then(res => res.json())
+          .then(data => {
+            setConversationHistory(data || []);
+            setIsLoadingHistory(false);
+          })
+          .catch(err => {
+            console.error("Failed to fetch history:", err);
+            showToast('Could not load conversation history.');
+            setIsLoadingHistory(false);
+          });
+      } else {
+        setConversationHistory([]);
+      }
     }
   }, [email]);
 
@@ -150,6 +170,7 @@ const EmailDetail = ({ email, attachments, onSend, showToast, signature }) => {
         <h2>{email.subject}</h2>
         <p>From: {email.from}</p>
       </div>
+
       <div className="message-history">
         {email.messages.map((msg) => (
             <div key={msg.id} className={`message-container ${msg.isFromMe ? 'sent' : 'received'}`}>
@@ -159,6 +180,30 @@ const EmailDetail = ({ email, attachments, onSend, showToast, signature }) => {
                 </div>
             </div>
         ))}
+      </div>
+      
+      <div className="conversation-history-section">
+          <details>
+              <summary>Conversation History ({conversationHistory.length})</summary>
+              <div className="history-content">
+                  {isLoadingHistory ? <p>Loading history...</p> : 
+                    conversationHistory.length > 0 ? (
+                      conversationHistory.map(thread => (
+                        <div key={thread.threadId} className="history-thread">
+                          <p className="history-subject"><strong>Subject:</strong> {thread.subject}</p>
+                           {thread.messages.map(msg => (
+                               <div key={msg.id} className={`history-message-bubble ${msg.isFromMe ? 'sent' : 'received'}`}>
+                                   <div className="message-from">{msg.isFromMe ? 'Me' : msg.from.split('<')[0].trim()}</div>
+                                   <p>{msg.body}</p>
+                                   <span className="history-date">{new Date(msg.date).toLocaleString()}</span>
+                               </div>
+                           ))}
+                        </div>
+                      ))
+                    ) : <p>No past conversations found with this sender.</p>
+                  }
+              </div>
+          </details>
       </div>
 
       {!email.replied && (
@@ -249,10 +294,26 @@ function App() {
     } catch(err) { showToast('Could not load signature.'); }
   }
 
-  const handlePasswordSubmit = (e) => {
+  const handlePasswordSubmit = async (e) => {
     e.preventDefault();
-    if (password === 'Taeyangtax1!!!') setIsAuthenticated(true);
-    else { setAuthError('Incorrect password.'); setPassword(''); }
+    setAuthError('');
+    try {
+      const res = await fetch('/api/auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password }),
+      });
+      if (res.ok) {
+        setIsAuthenticated(true);
+      } else {
+        const data = await res.json();
+        setAuthError(data.error || 'Incorrect password.');
+        setPassword('');
+      }
+    } catch (err) {
+      setAuthError('Authentication request failed.');
+      setPassword('');
+    }
   };
   
   const handleSend = async (payload) => {
@@ -369,7 +430,15 @@ const GlobalStyles = () => (
     
     .message-from { font-weight: bold; margin-bottom: 0.5rem; color: var(--secondary); }
     .message-bubble p { margin: 0; line-height: 1.6; white-space: pre-wrap; }
-    .responses-section, .attachments-section, .signature-preview-section { margin-top: 2rem; border-top: 1px solid var(--border-color); padding-top: 2rem; }
+    .responses-section, .attachments-section, .signature-preview-section, .conversation-history-section { margin-top: 2rem; border-top: 1px solid var(--border-color); padding-top: 2rem; }
+    .conversation-history-section summary { cursor: pointer; font-weight: bold; font-size: 1.1rem; }
+    .history-content { margin-top: 1rem; padding-left: 1rem; border-left: 2px solid var(--border-color); }
+    .history-thread { margin-bottom: 1.5rem; }
+    .history-subject { font-style: italic; color: var(--text-muted); margin-bottom: 1rem; }
+    .history-message-bubble { padding: 0.8rem 1.2rem; border-radius: 10px; max-width: 80%; margin-bottom: 0.5rem; }
+    .history-message-bubble.received { background-color: var(--primary); }
+    .history-message-bubble.sent { background-color: #2c3e50; margin-left: auto; }
+    .history-date { font-size: 0.75rem; color: var(--text-muted); display: block; text-align: right; margin-top: 0.5rem; }
     .responses-section h3, .attachments-section h3, .signature-preview-section h3 { margin: 0 0 1.5rem; }
     .attachments-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 1rem; }
     .attachment-item { display: flex; align-items: center; gap: 10px; background-color: var(--primary); padding: 10px; border-radius: 6px; }
