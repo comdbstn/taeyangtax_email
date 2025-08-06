@@ -238,7 +238,7 @@ const EmailDetail = ({ email, attachments, onSend, showToast, signature }) => {
 
 // --- Main App ---
 function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(true);
   const [password, setPassword] = useState('');
   const [authError, setAuthError] = useState('');
   const [unreplied, setUnreplied] = useState([]);
