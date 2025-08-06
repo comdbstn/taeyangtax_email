@@ -66,7 +66,7 @@ app.post('/api/auth', (req, res) => {
     if (!password) {
         return res.status(400).json({ error: 'Password is required.' });
     }
-    if (password === process.env.ACCESS_PASSWORD) {
+    if (password === "Taeyangtax1!!!") {
         // In a real app, you'd issue a token (e.g., JWT)
         res.json({ success: true });
     } else {
@@ -302,22 +302,11 @@ async function fetchAndCacheEmails() {
         const listRes = await gmail.users.threads.list({
             userId: 'me',
             labelIds: ['INBOX'],
-            q: 'is:unread',
-            maxResults: 15,
+            q: 'in:inbox',
+            maxResults: 30, 
         });
 
         const allThreads = listRes.data.threads || [];
-        
-        const repliedListRes = await gmail.users.threads.list({
-            userId: 'me',
-            labelIds: ['INBOX'],
-            q: 'is:read in:inbox -in:sent',
-            maxResults: 15,
-        });
-        
-        if (repliedListRes.data.threads) {
-            allThreads.push(...repliedListRes.data.threads);
-        }
 
         const uniqueThreads = Array.from(new Map(allThreads.map(t => [t.id, t])).values());
 
